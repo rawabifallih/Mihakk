@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 # Start, stop and inspect the Mihakk stack.
 #
 #   scripts/stack.sh up [--target-network NAME]

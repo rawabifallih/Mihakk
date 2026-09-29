@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 // Package runner executes a mutation plan against an authorised target.
 //
 // Everything this package sends goes through safety.Client. It holds no HTTP

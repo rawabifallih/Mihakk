@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 // Command mihakk is the Mihakk fuzzing engine CLI.
 //
 // Phase 1 ships the safety layer and the scope-check command. The run,

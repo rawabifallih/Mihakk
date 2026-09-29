@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 """Session reports, in JSON and in HTML.
 
 Three things govern this module.

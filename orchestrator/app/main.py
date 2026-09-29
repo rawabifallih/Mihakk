@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 """The orchestrator's HTTP API.
 
 Nothing here reaches a target. Every endpoint either reads stored rows or asks

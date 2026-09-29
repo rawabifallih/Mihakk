@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 """Mihakk local testbed: a deliberately imperfect web app for exercising the engine.
 
 This app exists to be fuzzed. It has two planted behaviours that a detector

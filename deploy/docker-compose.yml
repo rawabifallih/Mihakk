@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 # Mihakk local stack.
 #
 # The testbed, the engine and the orchestrator, which also serves the dashboard.

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Rawabi Alharbi. SPDX-License-Identifier: MIT.
+
 // The dashboard.
 //
 // Two rules govern every line here.
