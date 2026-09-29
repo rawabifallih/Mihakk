@@ -1,631 +1,317 @@
-# محكّ — Mihakk
+# Mihakk
 
 Created by Rawabi Alharbi
 
-أداة **fuzzing دفاعية** لتطبيقات الويب: تولّد مدخلات اختبار غير متوقعة لمساعدة
-مالك التطبيق على اكتشاف الأعطال والسلوك غير المعتاد وإصلاحها.
+Mihakk is a **defensive web-application fuzzer**. It generates unexpected inputs to help an application owner find and fix crashes and unusual behavior.
 
-> **النتائج مؤشرات تحتاج تحققًا، لا ثغرات مؤكدة.**
+> **Findings are indicators that require verification, not confirmed vulnerabilities.**
 
-## حدود الاستخدام — إلزامية
+## Authorized use and safety limits
 
-الأداة مخصصة **فقط** لتطبيقات تملكها أو لديك تصريح صريح باختبارها. الضوابط
-مفروضة داخل المحرك نفسه لا في الواجهة:
+Use Mihakk **only** against applications you own or are explicitly authorized to test. These safeguards are enforced by the engine, not merely by the UI:
 
-- **لا جلسة بلا إقرار تفويض.** الإقرار نصّ محدد يذكر المسؤول ووقت الإقرار،
-  و**مرتبط ببصمة النطاق**؛ فإقرار نطاق ضيّق لا يصلح لتشغيل نطاق أوسع، وينتهي
-  بعد ٢٤ ساعة.
-- **قائمة سماح صارمة.** مضيف ومنفذ ومسارات وطرق محددة. لا أحرف بدل في المضيف.
-  يُتحقق قبل كل طلب و**بعد كل إعادة توجيه**.
-- **تثبيت العنوان.** يُحلّ اسم المضيف مرة واحدة، ويُتحقق من كل عنوان ناتج، ثم
-  يُفتح الاتصال على **العنوان الرقمي المتحقَّق منه** — فلا تُتاح نافذة لتغيّر DNS
-  بين الفحص والاتصال.
-- **تصريح العناوين الخاصة فرديًا.** العناوين العامة لا تحتاج إدراجًا (اسم المضيف
-  يقيّدها أصلًا). أما loopback والشبكات الخاصة فلا تُقبل إلا عبر `allowed_addresses`
-  بعناوين محددة أو نطاقات ضيقة (‎/24 فأضيق لـIPv4، ‎/120 لـIPv6). النطاقات الواسعة
-  مثل `10.0.0.0/8` **مرفوضة كإعداد**، لأن تصريح شبكة كاملة يعيد فتح الثغرة نفسها:
-  أي إجابة DNS غير مقصودة داخلها ستُقبل.
-- **قائمة العناوين جزء من بصمة النطاق.** أي تعديل عليها يُبطل إقرار التفويض
-  ويرفض المحرك الملف حتى يُعاد الإقرار.
+- **No run without an authorization acknowledgement.** The acknowledgement names the responsible person and time, is bound to the scope digest, and expires after 24 hours. An acknowledgement for a narrow scope cannot authorize a broader one.
+- **Strict allowlist.** Host, port, path prefixes, and methods are specified. Host wildcards are not accepted. Scope is checked before every request and after every redirect.
+- **Address pinning.** The hostname is resolved once, every resulting address is checked, and the connection is made to the verified numeric address. There is no DNS-change window between validation and connection.
+- **Explicit private-address authorization.** Public addresses do not need to be listed separately because the hostname already constrains them. Loopback and private addresses require individual addresses or narrow ranges in `allowed_addresses`: at least /24 for IPv4 or /120 for IPv6. Broad ranges such as `10.0.0.0/8` are rejected as configuration.
+- **The address list is part of the scope digest.** Changing it invalidates the acknowledgement until authorization is renewed.
+- **Mandatory positive limits.** Request rate, total requests, concurrency, run duration, per-request timeout, and response size are required. There is no unlimited setting.
+- **Every redirect hop consumes a request.** With a total budget of one, the first request may be sent but the redirect is refused; the target receives no second request.
+- **HTTPS certificate verification stays enabled.** A trust root can be added for a local self-signed application, but there is no skip-verification option.
+- **Immediate stop** interrupts in-flight requests as well as preventing new ones.
+- **Sensitive values are redacted** from logs and reports. Saved cases store a regeneration recipe rather than the actual request, so request secrets are not written to the case store.
+- **Target data is not sent to an external service.**
+- The bundled local testbed is isolated and is not exposed to the internet.
 
-### قيد مقصود: نطاقات محظورة لا يمكن تصريحها إطلاقًا
+### Address ranges that cannot be authorized
 
-في الـMVP، لا يمكن لأي إعداد — مهما كان ضيّقًا وصريحًا — أن يسمح بالاتصال بهذه
-النطاقات:
+Even an explicit, narrow configuration cannot permit the following ranges in this MVP:
 
-| النطاق | أمثلة |
+| Range | Examples |
 |---|---|
-| link-local (IPv4/IPv6) | `169.254.0.0/16` ومنها عنوان الميتاداتا `169.254.169.254`، و`fe80::/10` |
-| multicast (بما فيه interface-local) | `224.0.0.0/4`، `ff00::/8` |
-| unspecified | `0.0.0.0`، `::` |
-| broadcast | `255.255.255.255` |
+| Link-local (IPv4 and IPv6) | `169.254.0.0/16`, including the metadata address `169.254.169.254`; `fe80::/10` |
+| Multicast, including interface-local | `224.0.0.0/4`; `ff00::/8` |
+| Unspecified | `0.0.0.0`; `::` |
+| Broadcast | `255.255.255.255` |
 
-**السبب:** لا يوجد هدف اختبار ويب مشروع في هذه النطاقات، بينما عنوان الميتاداتا
-تحديدًا يعيد بيانات اعتماد سحابية لمن يصل إليه. جعل تصريحه ممكنًا يحوّل *خطأ
-إعداد واحدًا* إلى تسريب بيانات اعتماد — وهي مقايضة غير مقبولة مقابل مرونة لا
-يحتاجها أحد.
+A metadata endpoint can expose cloud credentials. Allowing one configuration error to reach it is not an acceptable trade-off for this tool. `Scope.Validate` rejects a configuration that lists these ranges, and `Target.AuthorisesAddress` rejects them again when opening a connection. To test an application currently on a link-local address, give it an explicitly authorized loopback or narrow private address instead.
 
-**أين يُفرض:** في موضعين مستقلين — `Scope.Validate` يرفض ملف الإعدادات الذي يُدرج
-أيًّا منها في `allowed_addresses` (فلا تبدأ الجلسة أصلًا)، و`Target.AuthorisesAddress`
-يرفضها وقت فتح الاتصال حتى لو مرّ الإعداد بطريقة ما.
+## Project status
 
-**الأثر على المستخدم:** إن كان تطبيقك المستهدف على عنوان link-local، فالأداة لن
-تختبره في الـMVP. الحل هو إعطاؤه عنوان loopback أو عنوانًا خاصًا ضيّقًا وتصريحه
-في `allowed_addresses`.
-- **حدود إلزامية.** معدّل الطلبات، والإجمالي، والتوازي، ومدة الجلسة، ومهلة كل
-  طلب، وحجم الاستجابة — كلها مطلوبة وموجبة. **لا يوجد إعداد "بلا حدود".**
-- **كل قفزة تحويل تُحتسب طلبًا.** تتبّع التحويلات يمرّ بالمحاسبة نفسها: بحدّ
-  إجمالي = 1 يُرسل الطلب الأول ويُرفض التحويل، فلا يصل الهدف طلبٌ ثانٍ.
-- **HTTPS مدعوم، والتحقق من الشهادة لا يُعطَّل.** يمكن إضافة جذر ثقة للتطبيق
-  المحلي ذي الشهادة الموقّعة ذاتيًا، ولا يوجد خيار لتخطّي التحقق.
-- **إيقاف فوري.** يقطع الطلبات الجارية، لا الجديدة فقط.
-- **إخفاء البيانات الحساسة** من السجلات والتقارير. والأهم: الحالات المحفوظة
-  تخزّن *وصفة إعادة التوليد* لا الطلب الفعلي، فلا تصل الأسرار إلى القرص أصلًا.
-- **لا إرسال لبيانات الهدف إلى أي خدمة خارجية.**
-- تطبيق التجربة المحلي معزول وغير منشور للإنترنت.
+The local MVP through phase 8 is implemented. See the [operations guide](docs/operations.md) for the runbook and the limits of the validation performed so far. Isolated local test results are **not** production-deployment validation.
 
-## حالة المشروع
-
-المشروع يُبنى على مراحل. اكتمل تنفيذ الـMVP المحلي حتى المرحلة ٨؛ حدود التحقق
-والتشغيل الفعلي مبيّنة في [دليل التشغيل](docs/operations.md).
-
-| # | المرحلة | الحالة |
+| Phase | Scope | Status |
 |---|---|---|
-| 1 | الهيكل + العقد المشترك + طبقة الأمان (Go) | ✅ منجزة |
-| 2 | العينات + التحوير الحتمي | ✅ منجزة |
-| 3 | تطبيق التجربة `testbed` | ✅ منجزة |
-| 4 | التنفيذ + الرصد + حفظ الحالات + CLI | ✅ منجزة |
-| 5 | Control API + منسّق FastAPI + SQLite | ✅ منجزة |
-| 6 | التجميع والتصنيف + تقارير JSON/HTML | ✅ منجزة |
-| 7 | لوحة التحكم | ✅ منجزة |
-| 8أ | المكدّس على تطبيق المالك: Control API على Unix socket، شبكة هدف داخلية، الأسرار | ✅ منجزة |
-| 8ب | اختبارات المرونة الحيّة (الاستئناف، إعادة التشغيل، التزامن) | ✅ منجزة |
-| 8ج | التوثيق النهائي | ✅ منجزة |
+| 1 | Shared schemas and Go safety layer | Complete |
+| 2 | Request samples and deterministic mutation | Complete |
+| 3 | Isolated `testbed` | Complete |
+| 4 | Execution, detection, saved cases, and CLI | Complete |
+| 5 | Control API, FastAPI orchestrator, and SQLite | Complete |
+| 6 | Aggregation, classification, and JSON/HTML reports | Complete |
+| 7 | Dashboard | Complete |
+| 8a | Owner-application stack, Unix-socket Control API, internal target network, and secrets | Complete |
+| 8b | Live resilience tests: resumption, restart, and concurrency | Complete |
+| 8c | Operations documentation and tested quickstart | Complete |
 
-## التحوير الحتمي
+## Deterministic mutation
 
-Mihakk يبدأ من **عينات طلبات صحيحة** يعرف مالك التطبيق أنها مقبولة، ثم يحوّرها.
-الحالة رقم `i` هي **دالة نقية** في:
+Mihakk starts with **valid request samples** that the application owner knows the target accepts. Case `i` is a pure function of:
 
+```text
+(seed, engine version, sample digest, configuration digest, i)
 ```
-(البذرة، إصدار المحرك، بصمة العينات، بصمة الإعدادات، i)
-```
 
-لا يقرأ التوليد أي حالة مشتركة قابلة للتغيير، ولا ساعة، ولا يعتمد على أي عامل
-نفّذها أو متى انتهى. لذلك يكفي الترتيب حسب رقم الحالة لاستعادة التسلسل نفسه:
-بأي عدد عمال، وفي أي عملية، على أي جهاز.
+Generation reads no mutable shared state or clock and does not depend on which worker runs a case or when it finishes. Sorting by case number restores the same input sequence across worker counts, processes, and machines. This is a guarantee about **inputs**, not target behavior: status codes, timings, and even whether an indicator appears can change on replay.
 
-> هذا ضمان **للمدخلات** فقط. لا يضمن أن يستجيب التطبيق بالطريقة نفسها: قد يختلف
-> رمز الحالة أو زمن الاستجابة أو لا يظهر المؤشر أصلًا عند الإعادة.
+The generator is specified inside this project using SHA-256 in counter mode. It does not use `math/rand`, whose sequence for a seed is a property of the Go version and could change silently on an upgrade.
 
-لا يُستخدم `math/rand`: مخرجاته لبذرة معيّنة خاصية من خصائص Go نفسها، وترقية
-السلسلة قد تغيّر كل التحويرات بصمت وتُبطل الحالات المحفوظة. بدلًا منه مولّد
-قائم على SHA-256 في وضع العدّاد، معرّف بالكامل داخل المشروع.
+### Mutations and deliberate exclusions
 
-### ما تولّده المحوّرات — وما لا تولّده
+Mutators create **structural anomalies**: boundary values, type changes, truncation, excessive length, damaged encodings, and single separator characters. They do **not** generate ready-made exploits: no SQL-injection strings, script tags, template-injection probes, or authentication-bypass attempts. A single quote, angle bracket, backslash, newline, or NUL can expose parser mishandling without composing an attack.
 
-تولّد **تشوّهات بنيوية**: قيم حدّية، خلط أنواع، قصّ، إفراط في الطول، إتلاف
-الترميز، ومحارف فاصلة مفردة.
+- **Paths are not mutated.** Changing a path could leave the authorized prefix, waste the request budget on rejected cases, and confuse results.
+- **Sensitive or destination-changing headers are never mutated.** `Host` and forwarding headers could change the destination; `Content-Length` and `Transfer-Encoding` could break consistency with the body; mutating `Authorization` or `Cookie` would generate authentication-bypass attempts. Mutable headers come from an allowlist, not a denylist.
+- **Destination preservation is checked after generation.** Method, scheme, host, and path must still match the sample. The safety layer nevertheless checks scope before every request; generator checks do not replace that guard.
+- **Size limits apply to final bytes.** `max_value_bytes` constrains a generated value; `max_body_bytes` and `max_url_bytes` constrain the complete generated request. An oversized original sample is rejected when the plan is built, not silently truncated.
+- **Encoding expansion is counted.** Query/form re-encoding can turn a four-byte UTF-8 character into 12 percent-encoded characters; JSON escapes `<`, `>`, and `&`. Limits are checked on the re-encoded form at plan construction and again on every final case. If an expanding *field name* makes even an empty value too large, the sample is rejected.
+- **Header names are case-insensitive.** A sample containing both `X-Tag` and `x-tag` merges values in sorted order of their original spelling. Go map keys that affect fingerprints or output—query names, JSON keys, form fields—are sorted before use.
 
-**لا تولّد استغلالات جاهزة:** لا سلاسل حقن SQL، ولا وسوم سكربت، ولا فحوص حقن
-قوالب، ولا محاولات تجاوز مصادقة. المحارف الفاصلة المفردة (اقتباس، قوس زاوي،
-شرطة مائلة عكسية، سطر جديد، NUL) موجودة لأنها الطريقة لاكتشاف محلّل يسيء التعامل
-مع صيغته، لا لأنها مركّبة في هجوم.
+Manual sample files are supported. OpenAPI loading is described below.
 
-### قيود مقصودة في التحوير
+## The isolated `testbed`
 
-- **المسار لا يُحوَّر.** تحويره قد يُنتج وجهة خارج البادئات المصرّح بها، وأداة
-  تُنتج طلبات يرفضها حارس النطاق تهدر الميزانية وتربك النتائج. هذا قيد موثّق.
-- **ترويسات محظورة لا تُحوَّر أبدًا:** `Host` والترويسات المحوِّلة (تغيّر الوجهة)،
-  و`Content-Length`/`Transfer-Encoding` (تكسر الاتساق مع الجسم المُرسل)،
-  و`Authorization`/`Cookie` (تحويرها يجعل الأداة تولّد محاولات تجاوز مصادقة).
-  الترويسات القابلة للتحوير **قائمة سماح** لا قائمة منع.
-- **لا تتغيّر الوجهة إطلاقًا.** بعد كل توليد يتحقق المحرك أن الطريقة والمخطط
-  والمضيف والمسار كما هي في العينة. ومع ذلك **يبقى التحقق من النطاق في طبقة
-  الأمان إلزاميًا قبل كل طلب** — هذا الفحص يكشف خطأ في المولّد عند مصدره، ولا
-  يحلّ محل الحارس.
-- **حدود الحجم:** `max_value_bytes` يقيّد القيمة التي *ينتجها* التحوير.
-  أما `max_body_bytes` و`max_url_bytes` فيقيّدان الطلب المولّد كاملًا — وعينة
-  يتجاوز جسمها أو عنوانها الحدّ تُرفض عند بناء الخطة برسالة واضحة، بدل قصّ
-  بيانات المشغّل بصمت.
-- **تضخّم الترميز محسوب.** إعادة بناء الـquery أو الـform تمرّ بـ`Encode`
-  الذي يرمّز مئويًا ما قد تحمله العينة حرفيًا: محرف UTF-8 من ٤ بايتات يصير
-  **١٢ محرفًا**. وكذلك `encoding/json` يهرّب `<` و`>` و`&` إلى `\u003c`
-  وأخواتها. لذلك يُفحص الحدّ على **الشكل المُعاد ترميزه**، لا على نص العينة —
-  عند بناء الخطة، ثم مجددًا على البايتات النهائية لكل حالة. والرجوع إلى قيمة
-  فارغة **ليس كافيًا دائمًا**: إن كان *اسم* الحقل هو ما يتضخّم، فلن يُنقذه
-  تفريغ القيمة. في هذه الحالة تُرفض العينة عند بناء الخطة، ولا تُرجَع أبدًا
-  حالة تتجاوز الحدّ.
-- **أسماء الترويسات غير حساسة لحالة الأحرف.** إن حملت العينة `X-Tag` و`x-tag`
-  معًا، تُدمج قيمهما في مدخل واحد **بترتيب تصاعدي حسب الشكل الأصلي** — لأن
-  المرور على خرائط Go عشوائي الترتيب، ودمجها بلا فرز كان يجعل بصمة العينات
-  وكل التحويرات المشتقة منها تختلف بين التشغيلات. وكل موضع آخر يمرّ على خريطة
-  Go ويُغذّي المخرجات أو البصمة (أسماء الـquery، مفاتيح JSON، حقول الـform)
-  يجمع مفاتيحه ثم يفرزها قبل الاستخدام.
-- **تحميل OpenAPI مؤجَّل** إلى المرحلة ٤ حيث تُعرَّف الأهداف. المرحلة ٢ تدعم
-  ملف عينات يدويًا فقط.
+The bundled testbed is a small, **deliberately flawed** web application using only Python's standard library. It needs no package installation during its build or network access to run.
 
-## تطبيق التجربة `testbed`
-
-تطبيق ويب صغير **معيب عمدًا**، مكتوب بمكتبة Python القياسية وحدها — فلا تثبيت
-حزم عند البناء، ولا حاجة للشبكة عند التشغيل.
-
-| المسار | السلوك |
+| Endpoint | Behavior |
 |---|---|
-| `GET /api/health` | **ثابت تمامًا** — نفس الرد ونفس الحجم دائمًا |
-| `GET /api/items` | **مسار المقارنة** — أي تحوير لـ`page`/`limit`/`q` يعطي 200 سريعًا |
-| `POST /api/orders` | **5xx مزروع** حين يكون نوع `qty` خاطئًا (`null`/مصفوفة/كائن) |
-| `GET,POST /api/search` | **بطء مزروع محدود** حين يتعذّر استخدام الفهرس |
+| `GET /api/health` | Fully stable response and size |
+| `GET /api/items` | Comparison endpoint: mutations of `page`, `limit`, and `q` still produce a quick 200 |
+| `POST /api/orders` | Planted 5xx when `qty` has the wrong type (null, array, or object) |
+| `GET,POST /api/search` | Bounded planted slowdown when the index cannot be used |
 
-### العزل — مفروض ومُتحقَّق منه
+### Isolation is enforced and tested
 
-- **لا `ports:` إطلاقًا.** الوصول من داخل شبكة Docker فقط، باسم الخدمة:
-  `http://testbed:8000`.
-- **الشبكة `internal: true`** — بلا بوابة خارجية، فالهدف نفسه لا يستطيع الاتصال
-  بالخارج.
-
-هذا **مُتحقَّق منه فعليًا**، لا مجرد تعليق:
+The testbed has **no `ports:` entry** and is reachable only inside Docker at `http://testbed:8000`. Its network is `internal: true`, so the testbed itself has no external route.
 
 ```bash
 ./scripts/verify-testbed-isolation.sh
 ```
 
-ستة فحوص: اثنان ساكنان على إعدادات compose **المحلولة** (لا على نص الملف، حتى لا
-يتسلل منفذ عبر override)، وأربعة على النظام الحي — انعدام ربط أي منفذ من حاوية
-الـtestbed بالمضيف، **انعدام المسار الافتراضي** في جدول توجيه النواة، **فشل اتصال
-خارجي بـ`ENETUNREACH`**، وضبط إيجابي يثبت أن الـtestbed يعمل فعلًا.
+The six checks include two static checks of the **resolved** Compose configuration and four live checks: no host binding of any testbed port, no default kernel route, external connection failure specifically with `ENETUNREACH`, and a positive control showing that the testbed actually works.
 
-> **لا يوجد فحص «اتصل بـ`localhost:8000` وتوقّع الفشل».** كان يبدو مفيدًا وهو ليس
-> كذلك: فشل الاتصال لا يثبت أن الـtestbed غير منشور، ونجاحه لا يثبت أن الـtestbed
-> هو من ردّ — فقد تنشر خدمة أخرى ذلك المنفذ بشكل مشروع تمامًا. السؤال ذو المعنى هو
-> ما تربطه **حاوية الـtestbed نفسها**، وتجيب عنه `docker inspect` من مصدرين:
-> `NetworkSettings.Ports` (القائم فعلًا) و`HostConfig.PortBindings` (المطلوب) —
-> وهما قد يختلفان، لأن Docker يتجاهل `ports:` صامتًا على شبكة داخلية فلا يظهر
-> الطلب إلا في الثاني. والرفض يشمل **أي رقم منفذ**، لا 8000 وحده.
+A failed probe of `localhost:8000` would not prove isolation: another application may own that host port. Instead, the check reads the testbed container's requested bindings (`HostConfig.PortBindings`) and actual bindings (`NetworkSettings.Ports`) for **any** port. Docker can silently ignore a `ports:` request on an internal network, making the requested and actual bindings differ.
 
-**الفحوص الساكنة مقصورة على خدمة `testbed` وحدها.** لوحة التحكم وواجهة الـAPI
-ستحتاجان في المراحل اللاحقة منفذًا منشورًا وشبكة غير داخلية، وفحصٌ يمنع ذلك على
-كل الخدمات سينتهي به الأمر مُعطَّلًا — والفحص المعطَّل لا يحمي شيئًا. الخاصية
-الجديرة بالفرض أضيق وأدوم: **الـtestbed** لا يُبلغ من المضيف ولا منفذ له خارج شبكة
-Docker.
+Static restrictions apply to the **testbed service**, not every service. The dashboard/API legitimately need a loopback host port. Every network attached to the testbed must be internal; the existence of one internal network is insufficient if a second interface provides an external route. The engine may join the testbed's internal network without changing that rule. The static checker is `scripts/check_testbed_isolation.py`, with tests in `scripts/test_isolation_checks.py`.
 
-ويُشترط أن تكون **كل** شبكة يتصل بها الـtestbed داخلية، لا أن توجد شبكة داخلية
-واحدة بينها. من المرحلة الرابعة سينضم المحرك إلى شبكة الـtestbed الداخلية وهذا
-سليم؛ لكن لو اتصل الـtestbed نفسه بشبكة غير داخلية لعاد له النفاذ الخارجي عبر
-الواجهة الثانية. وقد تحققت من ذلك عمليًا: عند ربطه بالشبكتين معًا ظهر مسار
-افتراضي على `eth1` وخرجت الحزم فعلًا من المضيف.
+The isolation script restores the container to its prior state rather than running `compose down` on a shared project:
 
-التحليل الساكن في `scripts/check_testbed_isolation.py` واختباراته في
-`scripts/test_isolation_checks.py` — ١٨ اختبارًا تثبت الرفض (منفذ منشور للـtestbed،
-شبكة غير داخلية، **الشبكتان معًا**، `network_mode: host`) والقبول (منفذ مشروع
-للوحة التحكم، شبكة غير داخلية لخدمة أخرى، ومحرك يجمع الشبكتين).
-
-ولا يُنفّذ السكربت `compose down` على المشروع كله، بل يعيد الحال إلى ما كان عليه
-بحسب حالة الحاوية قبل التشغيل — وهي ثلاث حالات لا اثنتان:
-
-| الحالة قبل الفحص | بعده |
+| State before check | State after check |
 |---|---|
-| غير موجودة | تُنشأ ثم **تُزال** |
-| موجودة ومتوقفة | تُشغَّل بـ`start` (لا `up`، كي لا يُعاد إنشاؤها) ثم **تُوقَف مع بقائها** |
-| تعمل | **تُترك تعمل** |
+| Absent | Created, then removed |
+| Existing and stopped | Started with `start`, then stopped without deletion |
+| Running | Left running |
 
-دمج «متوقفة» مع «غير موجودة» كان سيحذف حاوية أنشأها المشغّل ولم يفعل بها سوى
-إيقافها.
+`scripts/test-isolation-scenarios.sh` covers an unrelated service publishing port 8000, the testbed publishing a different port, and each of the three prior container states.
 
-السيناريوهات الحيّة مغطاة بـ`scripts/test-isolation-scenarios.sh`: منفذ 8000 تنشره
-خدمة أخرى بينما يبقى الـtestbed غير منشور (يجب أن ينجح)، والـtestbed يربط منفذًا
-آخر غير 8000 (يجب أن يفشل)، وحاوية موجودة متوقفة، وحاوية تعمل، وغياب الحاوية.
+### Unable to verify is not a pass
 
-### فحصٌ لا يستطيع التحقق ليس فحصًا ناجحًا
+A failed external command, malformed JSON, `null`, or an unexpected structure is **`UNVERIFIED` with a nonzero exit**, never an empty port table or clean configuration:
 
-كل فحص يعتمد على تحليل مخرجات أمر خارجي قد يعجز عن جمع بيّنته: يفشل الأمر، أو
-يعود بـJSON تالف، أو بـ`null`، أو ببنية غير متوقعة. **لا يُعامل أيٌّ من ذلك
-كجدول منافذ فارغ ولا كإعدادات نظيفة** — بل يُسجَّل `UNVERIFIED` ويخرج السكربت
-بقيمة غير صفرية:
-
-```
+```text
 passed: 5   failed: 0   unverified: 1
 TESTBED ISOLATION NOT VERIFIED (1 check(s) could not be evaluated)
 ```
 
-التمييز بين الحالتين مقصود: «هذا معطوب» و«لم أستطع التحقق» أمران مختلفان في
-المعالجة، لكنهما معًا يمنعان ادّعاء العزل. ويشمل ذلك إعدادات compose المحلولة،
-وجدولَي المنافذ، وفحوص الشبكة والنفاذ الخارجي داخل الحاوية.
+A confirmed violation and an inability to check require different remediation, but neither permits an isolation claim. The in-container probe must report all three named checks—default route, external connectivity, and testbed access—and its exit code must agree with the report. A report containing one successful check cannot stand in for the other two.
 
-ويشمل ذلك **اكتمال** النتيجة لا صحتها فقط: تقرير الفحص داخل الحاوية يجب أن يحمل
-الفحوص الثلاثة **بأسمائها** — المسار الافتراضي، والنفاذ الخارجي، والوصول إلى
-الـtestbed. تقريرٌ فيه فحص واحد ناجح كان يُقرأ كتشغيل نظيف، بينما الفحصان الآخران
-لم يجريا أصلًا. كما يُقارَن **رمز خروج** أمر الفحص بمحتوى تقريره: الفحص يخرج بصفر
-فقط حين تنجح كل الفحوص، فتقريرٌ كله نجاح مع رمز غير صفري تناقضٌ لا يجوز تصديق
-نصفه المتفائل.
+The strict readers are `check_container_ports.py`, `check_testbed_isolation.py`, and `check_probe_report.py`. Their exit meanings are 0 = clean, 1 = violation, 2 = unverifiable. `scripts/test-unverified-paths.sh` replaces one `docker` call at a time with a failing stub and verifies a nonzero exit and `UNVERIFIED`, then runs an uncorrupted control.
 
-القراءة الصارمة في `check_container_ports.py` و`check_testbed_isolation.py`
-و`check_probe_report.py` (رموز خروج: `0` نظيف، `1` وُجدت مشكلات، `2` تعذّر
-التحقق)، واختباراتها في `test_container_ports.py`. والمسارات الحيّة في `scripts/test-unverified-paths.sh`،
-الذي يضع `docker` بديلًا في `PATH` يفسد استدعاءً واحدًا ويمرّر الباقي، ثم يثبت
-أن السكربت يخرج بقيمة غير صفرية ويطبع `UNVERIFIED` ولا يطبع «تم التحقق» —
-مع تشغيل ضابط بلا إفساد يثبت أن الفشل سببه الإفساد لا السكربت.
+The external-connectivity probe targets documentation-only `192.0.2.1` (TEST-NET-1), not a public site. **Only `ENETUNREACH` proves the needed property**: an externally connected container might also fail to reach that address, but only after sending a packet and timing out. Mutation checks confirm that publishing a testbed port or removing `internal: true` fails isolation verification.
 
-> **ملاحظتان على دقة الفحص.** الاتصال الخارجي يستهدف `192.0.2.1` من نطاق
-> TEST-NET-1 (RFC 5737) المحجوز للتوثيق — لا يُلمس أي موقع عام. والأهم: يُشترط
-> فشله بـ`ENETUNREACH` تحديدًا، لا بأي فشل؛ لأن العنوان غير قابل للتوجيه أصلًا،
-> فحاوية ذات نفاذ كامل تفشل أيضًا في الوصول إليه — لكن **بانتهاء المهلة بعد خروج
-> الحزمة**. قبول "فشل الاتصال" كان يمرّر شبكة غير معزولة، وهو ما حدث فعلًا قبل
-> تشديد الفحص.
+### Rules for Docker test scripts
 
-وقد اختُبر السكربت بعكسه: بإضافة `ports:` للـtestbed يفشل، وبإزالة `internal: true`
-يفشل، وبالاثنين معًا تفشل خمسة فحوص من ستة — ولا ينجح سوى الضبط الإيجابي الذي
-يثبت أن التطبيق يعمل.
+These rules are enforced by tests because an earlier live integration script initially ran `down -v --remove-orphans` against a shared Compose project, which could have removed operator volumes:
 
-### قواعد ثابتة لسكربتات Docker — تنطبق على القائم واللاحق
+1. **Use an independent temporary Compose project and clean only what that script created.** `-p` alone is insufficient because the real file pins global `container_name`, network `name`, and volume `name` values. `scripts/isolated_compose.py` derives a temporary file from the *resolved committed configuration* and removes those pinned names. Read-only checks may inspect the real project.
+2. **Never use `down -v` or `--remove-orphans` on a shared or potentially occupied project.** They are acceptable only inside the test's own temporary project. An explicit guard refuses teardown of the shared project; cleanup traps cover `EXIT INT TERM`.
+3. **Inspect the container's own port bindings**, both requested and actual, for every port. Failure to connect to a fixed host port says nothing about that container. An unreadable inspection is `UNVERIFIED`, not `PASS`.
+4. **Never `source` or execute data derived from an external response.** A previous `KEY=value`-then-`source` pattern executed an injected `$(...)`. `read_run_report.py` now validates values and emits tab-separated verdict lines that the shell *reads*; control characters cannot forge a verdict.
+5. **Fail closed when inventory cannot establish ownership.** `claim_name.py` uses both command output and exit code: 0 = free, 1 = already exists (do not overwrite or delete), 2 = unverifiable (refuse the name).
+6. **Keep the protected decoy inside the destructive command's reach without using the real project's names.** The live test owns a representative stack with unique `mihakk-decoy-<pid>-<ts>` names, derived from the committed file. It points the command under test to that file through `MIHAKK_COMPOSE_FILE`. A regression to “use the named project, then `down -v`” destroys the decoy and is detected.
 
-هذه القواعد أُرسيت في المرحلة الثالثة، ثم **انكسرت في سكربت جديد** في المرحلة 5.5:
-سكربت التكامل الحيّ أُنشئ أولًا وهو يشغّل مشروع Compose المشترك ثم ينفّذ عند الخروج
-`down -v --remove-orphans` عليه — أي أنه كان يوقف مكدّس المشغّل ويحذف
-volumes بياناته. فالمبدأ لا يكفي أن يُفهَم مرة؛ لذا صار مكتوبًا هنا وفي `HANDOFF.md`
-ومغطّى باختبار.
+`test_read_run_report.py` exercises shell injection, unreadable inputs, derived projects, name guards, and case-ID matching. `scripts/test-orchestrator-scenarios.sh` verifies that the decoy's identity, state, and data survive both successful and interrupted runs while the interrupted run removes its own resources.
 
-1. **مشروع مؤقت مستقل، وتنظيفٌ لما أنشأه السكربت وحده.** أي سكربت ينشئ أو يشغّل أو
-   يزيل موارد للاختبار يعمل في مشروع Compose خاص به. **و`-p` وحده لا يكفي**: ملف
-   Compose الحقيقي يثبّت `container_name` لكل خدمة و`name` لكل شبكة وvolume، والاسم
-   المثبّت عالمي، فمشروعان يتنازعان الموارد نفسها. لذلك يُشتقّ ملف مؤقت بـ
-   `scripts/isolated_compose.py` يحذف تلك المفاتيح **من الإعدادات المحلولة للملف
-   الحقيقي** — فيبقى ما يُختبر هو التعريفات المُودَعة لا نسخة يدوية تنحرف عنها.
-   ويجوز لفحص **غير مدمّر** أن يقرأ المشروع الحقيقي (مثل
-   `verify-testbed-isolation.sh` وهو يحلّل الإعدادات).
+### Bounded planted behaviors
 
-2. **لا `down -v` ولا `--remove-orphans` على مشروع مشترك أو قد يحمل بيانات وخدمات
-   قائمة.** داخل مشروع مؤقت خاص بالتشغيل هما مقبولان لأنهما لا يطالان إلا ما أنشأه.
-   ويُشترط حارس صريح يرفض الهدم إن كان اسم المشروع هو المشترك. والمصيدة `trap`
-   تكون على `EXIT INT TERM` لا على `EXIT` وحدها، وإلا تركت المقاطعة الموارد خلفها.
+`SLOW_PATH_DELAY_SECONDS = 0.4` is a fixed delay, **not a function of input length**. A two-character query and a 20,000-character query wait the same time; otherwise a mutation could turn this helper into a denial-of-service tool.
 
-3. **لا يُثبَت عدم نشر خدمة بمسبار على منفذ مضيف ثابت.** فشل الاتصال بـ
-   `localhost:8900` ليس بيّنة عن هذه الحاوية: قد تشغل العنوان خدمة أخرى، وقد ينجح
-   الاتصال بخدمة لا علاقة لها بالفحص. تُفحص **روابط منافذ الحاوية نفسها** —
-   المطلوبة (`HostConfig.PortBindings`) والفعلية (`NetworkSettings.Ports`) — **لأي
-   رقم منفذ**، عبر القراءة الصارمة في `check_container_ports.py`. وتعذُّر القراءة
-   `UNVERIFIED` وخروج غير صفري، لا `PASS`.
+The planted 5xx is an exception caught by a top-level handler, not a crash. Fifty consecutive failing requests followed by a good request leave the process running. A nonnumeric text `qty` returns an ordinary 400, not the planted 5xx.
 
-4. **لا `source` ولا أي تنفيذ لبيانات مشتقة من استجابات أو مخرجات خارجية.** النسخة
-   الأولى كانت تطبع `KEY=value` من استجابات HTTP ثم تُنفّذها بـ`source`؛ وقيمة تحمل
-   `$(...)` كانت **تُنفَّذ فعلًا** — أُثبت ذلك بالتجربة. القيم تُحلَّل وتُتحقَّق ولا
-   تُنفَّذ: `read_run_report.py` يُصدر أسطر حكم مفصولة بـTab **تُقرأ** بـ`read`،
-   وتُنظَّف من محارف التحكم فلا تستطيع قيمة معادية تلفيق سطر حكم.
-
-5. **الجرد يفشل مغلقًا، ولا يُحذف إلا ما نجحت المطالبة باسمه.** «أنشأتُه فأحذفه»
-   يفصله عن حذف بيانات أحدٍ آخر جردٌ واحد خاطئ. القرار في `claim_name.py` من رمز
-   خروج الجرد ومخرجاته معًا: `0` حرّ، `1` موجود فلا يُكتب فوقه ولا يُحذف، `2`
-   تعذّر التحقق **فيُرفض الاسم** — ولا يُفترض أنه حرّ أبدًا.
-
-6. **الشَرَك لا يحمل اسم المشروع الحقيقي، ويبقى داخل مرمى الأمر المختبَر.** هذان
-   شرطان يتجاذبان: شَرَكٌ بالأسماء الحقيقية يعيد الخطر نفسه، وشَرَكٌ بأسماء فريدة
-   يخرج من مرمى `down -v` فلا تعني نجاته شيئًا. الحل أن يملك الاختبار **المشروع
-   الذي يجب ألّا يُلمس**: مكدّس **تمثيلي** بأسماء فريدة (`mihakk-decoy-<pid>-<ts>`)
-   مشتق من الملف المُودَع، يشير إليه الاختبار الحيّ بـ`MIHAKK_COMPOSE_FILE`. وسكربت
-   يعود إلى «استخدم المشروع الذي يسمّيه الملف ثم `down -v`» يهدم المكدّس التمثيلي
-   فيُكشَف. ولذلك يقرأ الاختبار الحيّ اسم المشروع المحميّ **من الملف** لا من ثابت
-   مكتوب فيه.
-
-والقواعد الستّ مغطّاة باختبارات: `test_read_run_report.py` (٣٥ اختبارًا — الحقن
-بمحارف shell، والمدخل غير المقروء، والمشروع المشتق، وحارس الأسماء، ومطابقة معرّفات
-الحالات)، و`scripts/test-orchestrator-scenarios.sh` الذي يفحص الحارس أولًا ثم يبني
-المكدّس التمثيلي ويثبت بقاءه بالهوية والحالة والمحتوى **بعد نجاح** الاختبار الحيّ
-**وبعد مقاطعته** بـ`SIGTERM`، مع التحقق أن التشغيل المقاطَع أزال موارده هو.
-
-### حدّ البطء ثابت — عمدًا
-
-`SLOW_PATH_DELAY_SECONDS = 0.4` **ثابت لا دالة في المدخل**. مصطلح بحث من محرفين
-ومصطلح من ٢٠٠٠٠ محرف ينتظران المدة نفسها، ويُختبر ذلك صراحةً. لو تناسب التأخير مع
-طول القيمة المحوّرة لتحوّلت الأداة إلى وسيلة تعطيل ضد التطبيق الذي يُفترض أن
-تساعده.
-
-### الـ5xx نظيف وقابل للتكرار
-
-الخطأ المزروع **استثناء يلتقطه حارس علوي**، لا انهيار: العملية تبقى حيّة. يختبر
-ذلك خمسون طلبًا فاشلًا متتاليًا يتبعها طلب سليم — بلا إعادة تشغيل الحاوية.
-وبجانبه، `qty` نصّية غير رقمية تعطي **400 نظيفًا** لا 5xx: التمييز بين مؤشر حقيقي
-وتحقّق مدخلات عادي هو ما يجعل خط الأساس ذا معنى.
-
-### ملاحظة على `mutations_per_target`
-
-مجموعة محوّرات JSON فيها ١٩ محوّرًا، والحقل الواحد يأخذ `mutations_per_target`
-محوّرًا متتاليًا من دوران يبدأ عند إزاحة مشتقة. فإن كانت القيمة **أقل من حجم
-المجموعة، لن يرى الحقل بعض المحوّرات إطلاقًا**. قياسًا على الـtestbed: بالقيمة
-الافتراضية ٨ لم يُصَب الـ5xx المزروع في بذرتين من أربع؛ وبـ٢٠ فأكثر أُصيب
-السلوكان في كل بذرة جُرّبت.
+The JSON mutator set has 19 mutators. A field receives `mutations_per_target` consecutive mutators starting at a derived rotation offset. If that count is smaller than the set, a field may never see some mutators. In the testbed, the default of 8 missed the planted 5xx for two of four seeds; 20 or more reached both planted behaviors for every seed tried.
 
 ```bash
 ./scripts/go.sh run ./cmd/mihakk plan \
   -corpus /src/testbed/corpus.json -seed demo -mutations-per-target 24
 ```
 
-## التشغيل والرصد
+## Execution and detection
 
 ```bash
-# فحص فعلي على تطبيق التجربة، من طرف إلى طرف
+# End-to-end run against the isolated testbed
 ./scripts/test-integration-testbed.sh
 ```
 
-### كل طلب يمرّ بالعميل المحمي — ولا استثناء
+### Every request uses the guarded client
 
-حزمة `runner` لا تملك عميل HTTP ولا transport ولا socket. المخرج الوحيد من
-العملية هو `safety.Client`، فلا يمكن لأي شيء — بما فيه تحوير يحاول إعادة كتابة
-وجهته، أو أمر `reproduce` — أن يتجاوز فحص النطاق وتثبيت العنوان وحدّ المعدّل
-والميزانية والإيقاف الفوري.
+The `runner` package owns no HTTP client, transport, or socket. Its only way out is `safety.Client`, so a mutation that attempts to rewrite its destination—and even `reproduce`—cannot bypass scope checks, address pinning, rate limits, request budgets, or the kill switch.
 
-هذه خاصية في **الكود لا في التشغيل**، فتُفرض بفحص بنيوي: `enforcement_test.go`
-يحلّل كل ملف Go خارج حزمة `safety` ويرفض أي استدعاء قادر على الإرسال
-(`http.Get`، `http.Client`، `net.Dial`، …). ويرافقه اختبار يثبت أن الفاحص نفسه
-يكشف `http.Get` عاريًا — وإلا كان الفحص الأول بلا معنى.
+`enforcement_test.go` structurally scans Go code outside `safety` and refuses calls capable of sending traffic, such as `http.Get`, `http.Client`, and `net.Dial`. A negative control proves the scanner detects a bare `http.Get`. Behavioral tests also use samples that try another host, an out-of-prefix path, a forged `Host` header, or a redirect to an unauthorized host. The unauthorized target receives **zero requests**, and each refusal is audited as `not_sent`.
 
-ويُختبر الأثر سلوكيًا أيضًا: عينات تقصد الخروج (مضيف آخر، مسار خارج البادئة،
-ترويسة `Host` مزوّرة، تحويل إلى مضيف غير مصرّح) ⇒ **الهدف غير المصرّح به يستقبل
-صفر طلبات**، وكل رفض يُسجَّل في سجل التدقيق بحالة `not_sent`.
+### Indicators, not vulnerabilities
 
-### المؤشرات — لا ثغرات
+Every saved case has an **indicator type**, a comprehensible **reason** with the baseline used for comparison, and a full **regeneration recipe**. Its state is always `indicator_needs_verification`.
 
-كل حالة محفوظة تحمل: **نوع المؤشر**، و**سبب رصده** بلغة مفهومة مع خط الأساس الذي
-قورن به، و**وصفة إعادة التوليد** الكاملة. وحالتها دائمًا
-`indicator_needs_verification`.
+The engine records what it observed, not a confidence score it cannot justify. Detailed classification and confidence belong to the orchestrator; the confidence field is optional in `schemas/case.schema.json`. Baselines send each unmutated sample three times before mutations to measure median, spread, and size. A fivefold increase from a 2 ms baseline is only 10 ms and may be scheduling noise, so timing detection also has a **250 ms absolute minimum**. Ordinary 4xx responses are not indicators.
 
-**لا يوجد حقل ثقة.** المحرك يسجّل ما رآه ولماذا؛ أما التصنيف التفصيلي ومستوى
-الثقة فمن عمل مرحلة التحليل (٦)، ورقمٌ يُخترع هنا سيكون تخمينًا. وقد جُعل الحقل
-اختياريًا في `schemas/case.schema.json` بدل أن يُملأ بقيمة بلا أساس.
+### Reproduction is subject to the same rules
 
-**خط الأساس أولًا:** تُرسل العينات غير المحوّرة ثلاث مرات قبل أي تحوير، لقياس
-الوسيط والانتشار والحجم. بدونه لا معنى لـ«بطيء» أو «كبير».
+`mihakk reproduce <case-id>` rechecks a current, scope-bound authorization acknowledgement, scope, and all limits. It regenerates the request from the saved seed, case number, and mutation settings rather than replaying request bytes from disk.
 
-**عتبة مطلقة للزمن:** على مسار يردّ في ٢ ملّي ثانية، مضاعفة الوسيط خمس مرات = ١٠
-ملّي ثانية، وهو ضجيج جدولة عادي. العتبة الدنيا (٢٥٠ ملّي ثانية) هي ما يمنع ذلك من
-أن يصير سيلًا. و**رموز 4xx ليست مؤشرات**: أداة تُبلّغ عن كل 400 تدفن نتائجها
-الحقيقية.
+The result reports `exact` or `drifted`, explains differences, and says whether the indicator reappeared. Reappearance does not prove a vulnerability; absence does not prove the original observation was wrong. If safety rules refuse the request, the outcome is **unknown**, not “did not reproduce.”
 
-### إعادة الإنتاج لا تُعفى من شيء
+### Incomplete results are never presented as complete
 
-`mihakk reproduce <case-id>` يعيد التحقق من **التفويض** (إقرار حالي مرتبط
-بالنطاق) و**النطاق** و**الحدود**، ثم يُعيد اشتقاق الطلب من البذرة والرقم
-وإعدادات التحوير المحفوظة — لا يُعاد تشغيل بايتات من القرص، ولهذا لم تُخزَّن
-بيانات الاعتماد أصلًا.
+A failure to save an observed case or audit event is not ignored. The run becomes `incomplete`, records the count and reason for losses, and `mihakk run` exits nonzero with an explicit warning:
 
-النتيجة تقول `exact` أو `drifted` مع سرد ما تغيّر، ثم **هل ظهر المؤشر مجددًا أم
-لا** دون افتراض. وظهوره مجددًا لا يعني ثغرة مؤكدة؛ وغيابه **لا يعني أن الرصد
-الأول كان خاطئًا** — فالاستجابات والأزمنة تتغيّر بين التشغيلات. وإن رفضت طبقة
-الأمان الطلب، تكون الإجابة «غير معروف» لا «لم يتكرر».
-
-### نتيجة ناقصة لا تُعرض كنتيجة كاملة
-
-فشل حفظ حالة مرصودة أو كتابة حدث تدقيق **لا يُتجاهَل**. الجلسة تُسجَّل
-`incomplete` لا `completed`، ويُحفظ عدد ما ضاع وسببه، ويخرج `mihakk run` بقيمة
-غير صفرية مع تحذير صريح:
-
-```
+```text
 RESULTS INCOMPLETE
   8 observed indicator(s) could not be written to the case store ...;
   the saved results are a subset of what was found
   Do not read the saved cases as everything this run found.
 ```
 
-التمييز بين `detected` و`saved` هو جوهر الأمر: تشغيل رصد ١٦ مؤشرًا وحفظ ٢ **لم
-ينجح**، ومن يقرأ ملف الحالات لاحقًا لا سبيل له لمعرفة النقص ما لم يُصرَّح به.
-وإن تعذّر حفظ سجل الجلسة نفسه، يُرجع `Run` خطأً بدل ملخّص لا يمكن التحقق منه.
+A run that detected 16 indicators but saved two did **not** produce a complete result set. If even the session record cannot be saved, `Run` returns an error instead of an unverifiable summary. This covers direct storage failures; losses between engine and orchestrator are handled separately by the stream completeness contract.
 
-> هذا يخصّ **فشل التخزين المباشر**. أما فقدان الأحداث بين المحرك والمنسّق فأمر
-> منفصل، يعالجه عقد `completeness` في المرحلة الخامسة.
+### Audit trail and redaction
 
-### سجل التدقيق
+`data/audit.jsonl` records who started a run, the exact acknowledgement and its time, scope digest, targets, effective limits, seed, stop time/reason/statistics, every refused request, and every reproduction.
 
-`data/audit.jsonl` يسجّل: من بدأ الجلسة، ونصّ إقراره حرفيًا، ووقت الإقرار، وبصمة
-النطاق، والأهداف، والحدود السارية، والبذرة، ثم وقت الإيقاف وسببه وإحصاءاته —
-إضافة إلى كل طلب مرفوض وكل عملية إعادة إنتاج.
+Redaction has two layers. Redacting fields by name (`Authorization`, `password`) alone fails when a mutation makes the body unparsable. Known literal secret values from samples are also registered with the redactor and removed wherever they occur. A test searches both audit records and saved cases for five test secrets.
 
-**الإخفاء مزدوج الطبقة.** الإخفاء بالاسم (ترويسة `Authorization`، حقل
-`password`) يتوقف عن العمل لحظة يجعل التحوير الجسم غير قابل للتحليل. لذلك تُسجَّل
-القيم الحرفية الحساسة المعروفة من العينات في الـredactor وتُزال أينما ظهرت —
-مهما فعل التحوير بالطلب. ويختبر ذلك اختبارٌ يبحث عن خمسة أسرار في السجل وفي
-الحالات المحفوظة معًا.
+### Documented OpenAPI subset
 
-### OpenAPI — المجموعة الفرعية الموثّقة
+OpenAPI 3.x in **JSON or YAML** is supported for `query`, `path`, and `header` parameters (path- or operation-level), simple `application/json` bodies, and local references under `#/components/…`. Unsupported features are reported by name rather than silently ignored: `oneOf`/`anyOf`/`allOf`/`not`, external references, multipart bodies, cookie parameters, and authentication schemes.
 
-مدعوم: OpenAPI 3.x بصيغة **JSON أو YAML**، ومعاملات `query`/`path`/`header`
-(على مستوى المسار أو العملية)، وأجسام `application/json` بأنواع بسيطة،
-و`$ref` محلي إلى `#/components/…`.
-
-غير مدعوم، ويُبلَّغ عنه بالاسم بدل تجاهله: `oneOf`/`anyOf`/`allOf`/`not`،
-و`$ref` الخارجي، و`multipart`، ومعاملات `cookie`، وأنماط المصادقة.
-
-**الصيغتان تلتقيان مبكرًا:** مستند YAML يُحوَّل إلى JSON ثم يُحلَّل بـ**نفس
-الكود** — محلّل واحد لا اثنان يجب إبقاؤهما متفقين. والتحويل حتمي: القيم تُفكّ
-إلى قيم Go عادية ثم تُرمَّز بـ`encoding/json` الذي يفرز المفاتيح. فالمستند نفسه
-بالصيغتين ينتج **العينات والبصمة نفسيهما** — يثبته اختبار مقارنة حقلًا بحقل،
-واختبار حتمية على ١٠٠ تحليل.
+YAML is converted to JSON and passed through the **same parser** as JSON. Conversion to ordinary Go values and `encoding/json` makes key order deterministic. Equivalent documents yield identical samples and digests; field-by-field comparison and 100-parse determinism tests enforce that property.
 
 ```bash
 ./scripts/go.sh run ./cmd/mihakk plan -openapi testdata/openapi.example.yaml -seed demo
 ./scripts/go.sh run ./cmd/mihakk plan -openapi testdata/openapi.example.json -seed demo
-# البصمة نفسها من الملفين
+# Both files produce the same digest.
 ```
 
-اعتمادية YAML (`gopkg.in/yaml.v3` مثبّتة على `v3.0.1`) **مضمّنة في `engine/vendor/`**،
-فيبقى البناء والاختبار ممكنَين بلا اتصال (`--network none`).
+`gopkg.in/yaml.v3` is pinned at `v3.0.1` and vendored under `engine/vendor/`, so engine builds and tests can run offline with `--network none`.
 
-## Control API والمنسّق
+## Control API and orchestrator
 
 ```bash
-./scripts/test-orchestrator.sh     # اختبارات المنسّق (بحاوية، بلا شبكة)
+./scripts/test-orchestrator.sh     # Containerized, network-free orchestrator tests
 ```
 
-### سطح جديد ⇒ معزول بالقدر نفسه
+### The control surface is isolated
 
-الـControl API يستطيع **بدء جلسة**، أي أنه طريق جديد إلى ما يستطيع المحرك بلوغه.
-لذلك نال معاملة الـtestbed نفسها:
+The Control API can start a run and therefore needs the same isolation discipline as the testbed:
 
-- **على Unix socket لا على أي شبكة (منذ 8أ)** — `/run/mihakk/control.sock` في
-  volume لا يركّبه إلا المحرك والمنسّق، بصلاحية `0660` ومجموعة `10010`. المنسّق يصله
-  بـ`MIHAKK_ENGINE_URL=unix:/run/mihakk/control.sock`، ولا مستمع TCP للمحرك إلا
-  `/healthz` على loopback داخل حاويته. (قبل 8أ كان على `http://engine:8900` — **لم
-  يعد كذلك**.)
-- **بلا `ports:`**، والمحرك على شبكات داخلية فقط.
-- **رمز مشترك على كل نقطة عدا `/healthz`**، بمقارنة ثابتة الزمن، ويُقرأ من
-  البيئة لا من وسيط سطر أوامر (الوسيط يظهر في قائمة العمليات).
-- المحرك **يرفض تشغيل الـAPI بلا رمز** أصلًا.
+- Since phase 8a it listens on **Unix socket** `/run/mihakk/control.sock`, in a volume mounted only by engine and orchestrator, with mode `0660` and group `10010`. The orchestrator uses `MIHAKK_ENGINE_URL=unix:/run/mihakk/control.sock`. The engine's only TCP listener is `/healthz` on loopback **inside its container**. The older `http://engine:8900` Control API endpoint is no longer used.
+- The engine exposes no host `ports:` and joins internal networks only. Isolation checks verify no host port binding, and `scripts/test-stack.sh` reads `/proc/net/tcp` inside the engine container to require all listeners to be loopback-only.
+- Every Control API endpoint except `/healthz` requires a shared token compared in constant time. The token comes from the environment, not a CLI argument visible in process listings. The engine refuses to start the API without a token.
 
-وقد وُسِّع فاحص العزل ليشمل خدمة `engine`، ويتحقق عمليًا أن حاويتها لا تربط أي منفذ
-مضيف. ومنذ 8أ لا تعلن صورة المحرك أي منفذ أصلًا، و`scripts/test-stack.sh` يقرأ
-`/proc/net/tcp` داخلها ويشترط أن يكون كل مستمع على loopback.
+`POST /v1/runs` accepts the same configuration as the CLI, runs the same `Prepare` path, and constructs the same guarded client. It has no field to bypass acknowledgement or expand scope; unknown fields are rejected. There is no endpoint that forwards arbitrary caller-authored requests.
 
-### لا طريق حول طبقة الأمان
+The Python orchestrator does **not** send traffic to the target. Its path outward is the engine Control API. A test checks that the API exposes no `proxy`/`fetch`/`request` route and that `/v1/` routes are limited to `/v1/sessions`.
 
-`POST /v1/runs` يأخذ **نفس** ملف الإعدادات الذي يأخذه التشغيل من سطر الأوامر،
-ويمرّ بـ`Prepare` نفسه، ويُبنى منه العميل المحمي نفسه. **لا يوجد حقل** لتخطّي
-الإقرار أو توسيع النطاق — الحقول ببساطة غير موجودة، والحقول المجهولة تُرفض.
-ولا توجد نقطة تُمرّر طلبًا يؤلّفه المتصل.
+### Sequenced events and explicit loss
 
-وخدمة Python **لا ترسل شيئًا إلى الهدف**: مسارها الوحيد للخارج هو الـControl API،
-واختبار يتحقق أن لا مسار في الواجهة يحمل `proxy`/`fetch`/`request`، وأن كل مسار
-`/v1/` مقصور على `/v1/sessions`.
+The event buffer is bounded so a slow consumer cannot grow memory without limit in a process sending traffic to someone else's application. The buffer assigns contiguous sequence numbers. A gap observed by a consumer therefore indicates actual loss, not a producer numbering artifact.
 
-### الأحداث: تسلسل بلا فجوات، وفقدٌ يُعلَن
+A follower resuming from an evicted point receives an **out-of-sequence** notice (`seq: 0`) before anything else, including the number lost:
 
-المخزن مُقيَّد الحجم — مستهلك بطيء يجب ألّا يُنمي الذاكرة بلا حد داخل العملية
-التي ترسل حركة إلى تطبيق شخص ما. وأرقام التسلسل يمنحها المخزن **متتابعة**، فأي
-فجوة عند المستهلك تعني **فقدًا حقيقيًا** لا أثرًا لترقيم المنتج.
-
-ومن استأنف من نقطة أُخليت يُبلَّغ **قبل أي شيء آخر**، بإشعار خارج التسلسل
-(`seq: 0`) يذكر عدد ما ضاع:
-
-```
+```text
 81 event(s) were evicted from the engine's buffer before they could be
 delivered and are permanently lost; results derived from this stream are a
 subset of what the run produced
 ```
 
-### `completed` لا تُقال إلا بدليل
+### `completed` requires evidence
 
-المنسّق يحسب الاكتمال **من الصفوف المخزّنة**، لا من ادّعاء. الجلسة `completed`
-فقط إذا كانت أحداثها متصلة من ١ إلى `total_seq` الذي أعلنه المحرك. وأي من
-التالي يجعلها `incomplete` مع ذكر السبب:
+The orchestrator derives completeness from **stored rows**, not a claim. A session is `completed` only when the engine says it completed **and** stored events are contiguous from 1 through the engine's announced `total_seq`.
 
-| الحالة | ما يُقال |
+| Condition | Reported reason |
 |---|---|
-| ثقب في التسلسل | `gaps at sequence 3` |
-| إشعار إخلاء من المحرك | `permanently lost` |
-| بثّ انتهى مبكرًا | `ended early` |
-| بلا `done` | `unknown` + الحالة `interrupted` |
+| Sequence hole | `gaps at sequence 3` |
+| Engine eviction notice | `permanently lost` |
+| Stream ends early | `ended early` |
+| Missing `done` | `unknown`, with `interrupted` status |
 
-والحالة **تُشتقّ عند كل قراءة**، فلا تستطيع جلسة الاستمرار في ادّعاء الاكتمال بعد
-اكتشاف نقص لاحق. واستجابة `/findings` تحمل التحذير نفسه، لأنها الاستجابة الأرجح
-أن تُقرأ كالصورة الكاملة.
+The status is re-derived on every read. A later-discovered gap cannot leave a session claiming completion, and `/findings` carries the same warning. A contiguous stream proves the orchestrator received everything the engine *emitted*, not that the engine persisted everything it *observed*. If the engine reports `incomplete` because it could not write a case or audit event, that status and reason survive even with a perfect event sequence. `stopped` and `failed` remain distinct statuses; data completeness is shown separately in the `completeness` block.
 
-**و`completed` تحتاج شرطين لا شرطًا واحدًا:** أن يقول المحرك `completed`، **وأن**
-يكون التسلسل المخزّن متصلًا. بثٌّ كامل يثبت أن المنسّق استلم كل ما بثّه المحرك،
-ولا يقول شيئًا عمّا إذا كان المحرك قد نجح في حفظ ما وجده. فإن أبلغ المحرك
-`incomplete` — لأنه عجز عن كتابة حالة أو حدث تدقيق — **تُحفظ حالته وسببه** ولو
-كان التسلسل متصلًا تمامًا؛ وقراءة بثٍّ مرتّب كدليل اكتمال تحوّل اعتراف المحرك
-بالفقد إلى ادّعاء بعدمه.
+### Restart and SQLite recovery
 
-أما `stopped` و`failed` فتبقيان كما هما — ليستا ادّعاءً بالاكتمال أصلًا — ويُعرض
-اكتمال البيانات مستقلًا عنهما في كتلة `completeness`.
+On startup, the orchestrator finds sessions that were `running` and follows each from its **last contiguously stored sequence** using `from_seq`. A guard prevents two followers for one session from racing to consume events or set the final status. After bounded failed reconnection attempts—for example, if a restarted engine no longer knows the run—the session becomes `interrupted` with a reason. It is not left `running` indefinitely.
 
-### إعادة تشغيل الخدمة تستأنف تلقائيًا
+The SQLite key `(session_id, seq)` makes duplicate delivery idempotent. Recovery asks for the last *contiguous* number, not the highest: if event 5 arrived but 4 did not, restarting from 3 gives event 4 another chance.
 
-عند بدء المنسّق، يلتقط الجلسات التي كانت `running` ويستأنفها من **آخر رقم متصل
-محفوظ** عبر `from_seq`، بحارس يمنع إنشاء متابعتين للجلسة نفسها (متابعتان
-تستهلكان البث معًا وتتسابقان على الحالة النهائية).
+## Aggregation, classification, and reports
 
-وإن تعذّر الوصول إلى التشغيل — كأن يكون المحرك قد أُعيد تشغيله ولم يعد يعرفه —
-تُسجَّل الجلسة `interrupted` مع السبب بعد استنفاد محاولات إعادة الاتصال. **لا
-تُترك `running` إلى أجل غير معلوم** لأن العملية التي كانت تراقبها ماتت.
+The engine **aggregates without judging**; the orchestrator **classifies and renders**:
 
-### SQLite
-
-الحفظ **مُحصَّن من التكرار**: مفتاح `(session_id, seq)` يجعل تخزين الحدث مرتين
-لا شيء، لا خطأً — لأن إعادة الاتصال تعيد تسليم أحداث محفوظة بشكل مشروع.
-والاستئناف يطلب **آخر رقم متصل** لا الأعلى: لو وصل ٥ وضاع ٤، فالطلب من ٣ يمنح
-٤ فرصة أخرى بدل شطبه فورًا.
-
-## التجميع والتصنيف والتقارير
-
-المعمارية موزَّعة: **المحرك يجمّع ولا يحكم، والمنسّق يحكم ويصيّر.**
-
-```
-GET /v1/runs/{id}/aggregate        (المحرك)   تجميع خام حتمي، بلا أي تصنيف
-GET /v1/sessions/{id}/report       (المنسّق)   json | html، يُشتقّ عند كل قراءة
+```text
+GET /v1/runs/{id}/aggregate         engine: deterministic raw aggregation
+GET /v1/sessions/{id}/report        orchestrator: JSON or HTML, derived on each read
 ```
 
-### التجميع عرضٌ لا مرشِّح
+### Aggregation is a view, not a filter
 
-وحدة التجميع **زوج (حالة، مؤشر)** لا حالة، لأن الحالة قد تحمل عدة مؤشرات. والتوقيع
-`(النوع، عينة التحوير، الطريقة، المسار بلا query، ورمز الحالة للـ5xx)`؛ والمسار الخام
-لا يصلح مفتاحًا لأن الـquery يتغيّر مع كل تحوير فلا يتجمّع شيء.
+The aggregation unit is a **(case, indicator) pair**, since one case can have several indicators. Its signature includes indicator type, mutation family, method, path without query, and response status for 5xx. The raw URL is not a useful grouping key because mutated query strings differ.
 
-وأربع خصائص تمنع التجميع من أن يصير إخفاءً، وكلها مُختبَرة:
+Four tested conservation properties prevent aggregation from hiding findings:
 
 1. `Σ occurrences == indicator_instances`.
-2. `⋃ case_ids ==` كل معرّفات الحالات المخزّنة.
-3. المستند **يعلن مجاميعه** فتُقارَن بالمحسوبة، والاختلاف **إخفاق** لا تقريب.
-4. كل مجموعة تحفظ **قائمة معرّفاتها كاملة**؛ التقرير قد يعرض أقل ويقول كم أخفى، أما
-   المستند فالقصّ فيه إخفاء.
+2. The union of group `case_ids` equals every stored case ID.
+3. Declared totals must match independently calculated totals; disagreement is an error.
+4. Every group stores its **complete** ID list. A report may display fewer if it states how many it omitted; the aggregate document may not silently truncate.
 
-والمستند **بلا طابع زمني**، فهو دالة نقية في الملفات المخزّنة وتُقارن نسختان بايتًا
-ببايت. والمجموعات مرتَّبة ببصمة التوقيع لا بترتيب الخرائط.
+The aggregate has no timestamp, is byte-for-byte reproducible from stored data, and sorts groups by signature digest rather than map iteration order.
 
-### النطاق: مصدره وإثباته
+### Provenance of enforced scope
 
-اللقطة تأتي من **كائن `Scope` الذي فرضته طبقة الأمان**: `client.Scope()`. و`NewClient`
-صار **يستنسخ** النطاق، لأنه كان يحتفظ بمؤشّر المتصل ويسلّمه للموصّل — فتعديل إعدادات
-المتصل كان يغيّر ما تفرضه جلسة جارية، ويجعل «ما فُرض» بلا معنى ثابت يمكن اختباره.
-و`ScopeDigest` و`Targets` وسجل التدقيق واستجابة البدء **كلها تُشتقّ من اللقطة نفسها**،
-فلا يصف جزءٌ من السجل نطاقًا يخالف جزءًا آخر.
+The snapshot comes from the `Scope` actually enforced by `safety.Client`: `client.Scope()`. `NewClient` clones the caller's scope, preventing a caller's later mutation from changing a running session's enforcement. `ScopeDigest`, `Targets`, audit records, and start responses all derive from that same snapshot.
 
-واختبار المنشأ يبني العميل بنطاق **يختلف** عن `Config.Scope` ويؤكّد أن السجل يتبع
-العميل في كل حقل. **وإعادة حساب البصمة تثبت اتساق المخزَّن فقط** — لا أن المعروض هو ما
-فُرض؛ ذاك يثبته المنشأ.
+A provenance test deliberately supplies a client scope different from `Config.Scope` and checks every recorded field follows the client. Recomputing a digest proves only internal consistency; provenance is what proves that the displayed scope was the one enforced.
 
-| الحالة | ما يُعرض |
+| Scope record | Display |
 |---|---|
-| مسجَّل ومتّسق | النطاق، مع حجب `allowed_addresses` |
-| مسجَّل وغير متّسق | يُعرض موسومًا **غير متّسق** مع سبب صريح، ولا يُقدَّم نطاقًا مُثبتًا |
-| غير مسجَّل | **«ملخص أهداف»** فقط، ولا يُدَّعى أنه النطاق الكامل |
+| Present and consistent | Scope, with `allowed_addresses` redacted |
+| Present but inconsistent | Explicitly marked inconsistent with a reason; never presented as proven |
+| Absent | A **target summary** only, not a claim to show full scope |
 
-و`allowed_addresses` خارج التقرير القابل للمشاركة؛ والبصمة محسوبة على النطاق **الكامل**
-فالحجب لا يُلفِّق بصمة مطابقة. والمنسّق يرشّح الحقل مرة أخرى بدل أن يثق بالمحرك.
+`allowed_addresses` is omitted from shareable reports, while the digest remains based on the **full** scope. The orchestrator filters the field again rather than trusting the engine's filtering.
 
-### التصنيف يشرح نفسه
+### Classification explains its reasoning
 
-`confidence` = **الوثوق بالملاحظة**، لا الخطورة. 5xx عالية لأن التطبيق أقرّ بفشله؛
-والمهلة وخطأ الاتصال متوسطة **مع تصريح بأن المحرك لا يميّز عطل الهدف من عارض في الطريق
-إليه**؛ والبطء والحجم منخفضان. ومعدِّلات: تعدّد التحويرات يرفع، وخط أساس غير مستقر يخفض
-مقارنةً تعتمد عليه، وإعادة إنتاج تكرّرت ترفع.
+`confidence` means **confidence in the observation**, not severity. A 5xx is high confidence because the application acknowledged failure. Timeouts and connection errors are medium, with an explicit caveat that the engine cannot distinguish target failure from a problem en route. Slow or large responses are low confidence. Multiple mutation families can raise confidence; an unstable baseline can lower a baseline-dependent finding; a repeated reproduction can raise it.
 
-و«لم يُفحص» ليست «فُحص فلم يتكرر» — قيمة ثالثة مستقلة، وإلا بدت مجموعة لم يفحصها أحد
-أسوأ من واحدة فُحصت. وكل قاعدة تُطلق **جملة** تُحمل إلى التقرير، فيستطيع القارئ أن
-يخالف التفكير لا النتيجة وحدها.
+“Not checked” is distinct from “checked but did not recur.” Each rule contributes a sentence to the report so a reader can evaluate the reasoning, not just the label.
 
-### الاكتمال والحماية في التقرير
+### Completeness and safe HTML
 
-الاكتمال **أسوأ مصدرين مستقلين**: بثٌّ وصل كاملًا (المنسّق)، ومحرك كتب كل ما رأى. وكل
-سبب **منسوب لجانبه**، لأن «انقطع البثّ» و«تعذّر على المحرك الحفظ» يستدعيان ردّين مختلفين.
+Report completeness is the **worse of two independent answers**: whether the orchestrator received the full event stream and whether the engine persisted everything it observed. Each reason is attributed to its source because a broken stream and an engine write failure require different responses.
 
-**وتصريح المحرك بالنقص حاسمٌ بذاته.** العدّادات وحدها لا تكفي: المحرك يضع `incomplete`
-حين يرصد ما لم يستطع كتابته، وقد يقولها دون أن تُملأ كل عدّاد. والاعتماد على العدّادات
-وحدها كان يجعل تشغيلًا **أعلن المحرك نقصه** يُعرض مجموعةَ نتائج كاملة متى كان البثّ
-متصلًا والعدّادات صفرًا — وهو بعينه الادّعاء الذي وُضعت القاعدة لمنعه. و`failed` مثلها.
-أما `stopped` فلا تُعدّ نقصًا — ما خُزّن هو كل ما أُنتج قبل الإيقاف — لكن التقرير يقول
-صراحةً إن التشغيل أُوقف مبكرًا، فلا تُقرأ «كامل» على أنها «غُطّيت الخطة».
+An engine-declared `incomplete` state is decisive even when some counters are zero. `failed` is likewise not complete. A `stopped` run is not automatically data-incomplete—everything produced before the stop may have been stored—but the report explicitly says the plan ended early. If declared aggregate totals disagree with calculated totals, both JSON and HTML endpoints return **502** with the conflicting numbers, rather than a 200 response whose warning readers might overlook.
 
-**واختلاف المجاميع المعلنة عن المحسوبة لا يُنتج تقريرًا.** كان يُعاد 200 ومعه تحذير، وهذا
-شكل خاطئ: التحذير هو ما يتخطّاه القارئ، والأرقام هي ما ينقله. مستندٌ يناقض نفسه لا
-يُعرف أيُخفي نتائج أم يخترعها، وذلك وحده سبب كافٍ لعدم نشر أيٍّ من الجوابين — فتفشل
-النقطة بـ502 في الصيغتين، بسبب يسمّي الرقمين.
+HTML treats content as hostile because indicator reasons can include target response bytes and request previews can contain mutations. All values pass through one escaping function into **text nodes only**; even a request URL is displayed as text, not as a link. The report contains no JavaScript, event handlers, or external resources. Security policy is a real response header, with a meta fallback for a saved copy:
 
-**وحماية HTML مبنية على أن المحتوى معادٍ، لأن بعضه كذلك**: نص `reason` يدسّ بايتات من
-جسم استجابة الهدف، و`body_preview` يحمل الحمولة المحوَّرة. فالهروب في دالة واحدة وبلا
-أي مسار خام؛ والقيم في **عقد نصّية** فقط — وعنوان الطلب يُطبع نصًّا لا رابطًا؛ وبلا
-JavaScript وبلا معالجات أحداث؛ وبلا أي مورد خارجي.
-
-والسياسة **ترويسة استجابة حقيقية** لا وسم `<meta>` وحده (الوسم احتياط للنسخة المحفوظة):
-
-```
+```text
 Content-Type: text/html; charset=utf-8
 X-Content-Type-Options: nosniff
 Referrer-Policy: no-referrer
@@ -633,206 +319,106 @@ Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 
   form-action 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox
 ```
 
-> **الفحص يحلّل الشجرة ولا يبحث في النص.** التقرير **ملزَم** بإبقاء الحمولة مرئية
-> مهروبة، فاختبارٌ يمنع ظهور `javascript:` أينما وردت كان سيرفض الجواب الصحيح. يُفحَص ما
-> يتصرّف المتصفح بناءً عليه: عناصر تنفيذية، وسمات `on*`، ومخططات روابط، وسمات `style`،
-> وموارد خارجية — مع التأكد أن الحمولة **حاضرة كنصّ**. و`scripts/check_report_html.py`
-> يفعل ذلك، ومُختبَرٌ بأنه يرفض كل نوع صفحة غير آمنة ويقبل الصفحة المهروبة. **وهو نفسه**
-> ما تستعمله اختبارات المنسّق (‏`scripts/` مُركَّب للقراءة في حاويتها)، فلا تُحكَم الصفحة
-> بشيفرتين مختلفتين تكون أضعفهما هي المعيار الفعلي.
+`scripts/check_report_html.py` parses the document tree, not a text search. Hostile strings such as `javascript:` **must remain visible as escaped text**, while executable elements, `on*` attributes, unsafe link schemes, style attributes, and external resources are rejected. The same checker is used by orchestrator tests; `scripts/` is mounted read-only into their container.
 
-### عقد لغتين، مُختبَر من الجانبين
+### Shared contract across Go and Python
 
-`schemas/examples/aggregate.golden.json` مستند واحد مُودَع: اختبار Go يؤكّد أن المحرك
-ما زال يُنتجه **بايتًا ببايت**، واختبار Python يؤكّد أنه ما زال يفهمه. فإعادة تسمية حقل
-في أحد الجانبين تُسقط أحد الاختبارين فورًا بدل أن تنجو إلى تشغيل حيّ. ويُعاد توليده
-بقصد: `scripts/go.sh test ./internal/aggregate/ -run TestGolden -update`.
+`schemas/examples/aggregate.golden.json` is committed once. A Go test requires the engine to produce it byte-for-byte; a Python test requires the orchestrator to understand it. Intentional regeneration uses `scripts/go.sh test ./internal/aggregate/ -run TestGolden -update`. A live integration test checks the report through the orchestrator and Control API against case IDs actually delivered over the stream, and inspects real HTTP headers with `curl -D-`.
 
-وفوق ذلك، `scripts/test-integration-orchestrator.sh` يتحقق من كل ما سبق **على تشغيل
-حقيقي واحد**: التقرير يُجلب عبر المنسّق الذي يجلب التجميع من المحرك عبر Control API،
-والهويات تُقارن بمعرّفات الحالات التي عبرت السلك فعلًا، والترويسات تُقرأ من الاستجابة
-المقدَّمة بـ`curl -D-`.
+The unused `unexpected_status` schema enum value was removed rather than pretending the detector produced it. A bidirectional test now compares the committed schema enum with Go constants so neither a dead schema value nor an unlisted Go value can slip through.
 
-### `unexpected_status` — والإصلاح الحقيقي
+## Dashboard and authentication
 
-كان في enum المخطط ولا يُنتجه المحرك، وتعليق `detect.go` يدّعي التطابق. حُذف. لكن
-الإصلاح ليس الحذف بل **اختبارٌ يقرأ enum من المخطط المُودَع ويؤكّد أنه يساوي مجموعة
-ثوابت Go** في الاتجاهين — فمن يضيف نوعًا في جانب دون الآخر يفشل عنده. الفحص أحادي
-الاتجاه كان سيقبل القيمة الميتة إلى الأبد.
+### Why the orchestrator needs authentication
 
+Before the dashboard, the orchestrator relied on publication at `127.0.0.1` and was intended for scripts or `curl`. A browser also carries sessions for other sites, making cross-site requests and DNS rebinding relevant to an API that can start fuzzing runs.
 
-## لوحة التحكم، والمصادقة التي احتاجتها
+Two tokens have different jobs and are **never interchangeable**: the dashboard token authenticates an operator; the Control API token reaches the engine and never leaves the orchestrator process for a page, JavaScript asset, or response. Tests search dashboard files and responses for the engine token.
 
-### أول مرة يحتاج المنسّق مصادقة
+`HttpOnly` prevents JavaScript from **reading** a cookie's value; it does not stop injected JavaScript from making authenticated requests because the browser attaches cookies automatically. CSRF defenses cannot rescue an XSS-compromised page. Preventing XSS is therefore essential, with other layers in support.
 
-قبل هذه المرحلة **لم يكن على المنسّق أي مصادقة**: لا middleware ولا رمز، وحمايته
-الوحيدة أنه منشور على `127.0.0.1`. كان ذلك مقبولًا حين كان كل متصل سكربتًا أو `curl`.
-واللوحة تحوّل المتصل إلى **متصفح يحمل جلسات مواقع أخرى**، وكل نقطة يبلغها نقطةٌ
-**تُشغّل fuzzing** — فتصير الطلبات عبر المواقع وإعادة ربط DNS أسطحًا حقيقية.
+### Independently tested layers
 
-**رمزان، ولا يتبادلان أبدًا:** رمز اللوحة يصادق شخصًا، ورمز Control API يبلغ المحرك
-**ولا يغادر هذه العملية** — لا إلى صفحة ولا إلى ملف JS ولا إلى جسم استجابة. واختبار
-يفتّش كل استجابة وكل ملف في `dashboard/` عنه.
-
-**وتصحيحٌ لوصف كان خاطئًا في الخطة:** ‏`HttpOnly` يمنع JavaScript من **قراءة قيمة**
-الكعكة، **ولا يمنع** سكربتًا محقونًا من إصدار طلبات موثّقة — المتصفح يرفق الكعكة
-تلقائيًا. فإن وقع XSS صارت دفاعات CSRF بلا أثر أيضًا. **فمنع XSS هو الضابط الحامل
-للوزن**، وما دونه طبقات.
-
-### الحماية طبقةً طبقة، وكلٌّ مُختبَرة وحدها
-
-| الطبقة | ما تغطّيه |
+| Layer | Purpose |
 |---|---|
-| جلسة في **جانب الخادم** (جدول SQLite) | الإبطال عند الخروج حقيقي؛ تبقى الجلسة بعد إعادة تشغيل الخدمة إلى أن تنتهي مهلتها أو تُبطَل |
-| عمر **12 ساعة** مطلق و**30 دقيقة** خمول | لكعكة مسرَّبة أفق |
-| **تدوير** عند الدخول وكل ساعة | يمنع تثبيت الجلسة، ويضيّق نفع معرّف مسرَّب |
-| **CSRF** بترويسة مخصّصة، والرمز من الخادم | ترويسة مخصّصة تفرض preflight، والمقارنة في الخادم |
-| فحص **`Origin`** | يرفض تغييرًا عابر الأصل حتى مع رمز CSRF صحيح |
-| فحص **`Host`** بقائمة سماح | ما يُفشل إعادة ربط DNS |
-| مقارنة **ثابتة الزمن** + تحديد معدّل وقفل | والرسالة **واحدة عامة** فلا يتعلّم المُخمِّن شيئًا |
+| Server-side session in SQLite | Real logout revocation; sessions persist across service restart until expiry or revocation |
+| 12-hour absolute and 30-minute idle lifetime | Bounds exposure of a leaked cookie |
+| Rotation on login and hourly | Prevents fixation and narrows the usefulness of a leaked session ID |
+| Server-generated CSRF token in a custom header | Requires preflight and is checked server-side |
+| `Origin` check | Refuses a cross-origin mutation even with a valid CSRF token |
+| Allowlisted `Host` | Rejects DNS rebinding |
+| Constant-time comparison, rate limiting, and lockout | One generic failure message reveals no guessing details |
 
-والمصادقة **middleware لا استدعاء في كل معالج**: كانت في المعالجات فكان FastAPI
-يتحقق من جسم الطلب **قبلها**، فيعود 422 لمتصل بلا اعتماد أصلًا ويصف له المخطط.
+Authentication is middleware, not an ad hoc call in each handler. Handler-level checks let FastAPI validate a request body *first* and return schema details (422) to an unauthenticated caller.
 
-### سطح ما قبل المصادقة: أربعة أشياء، وبلا JavaScript
+### Four pre-authentication routes, no login JavaScript
 
-`‎/healthz`، و`GET/POST /auth/login`، و`/assets/login.css`. **وصفحة الدخول نموذج HTML
-عادي بلا سكربت** وسياستها `script-src 'none'`؛ والتوسيع الوحيد `form-action 'self'`
-مقصور عليها. وكل ما عداها يحتاج اعتمادًا — **بما فيه القراءة**، لأن التقرير يحمل نطاق
-المشغّل وسلوك تطبيقه.
+Only `/healthz`, `GET/POST /auth/login`, and `/assets/login.css` are available before login. The login page is a plain HTML form with no script and `script-src 'none'`; only that page allows `form-action 'self'`. Every other route—including reads—requires authentication because reports expose an operator's scope and application behavior. `main.py` declares the route list, and a test compares it with the actual application routes so a new unlisted route fails.
 
-وقائمة المسارات **معلَنة** في `main.py`، واختبار يقارنها بمسارات التطبيق الفعلية
-ويفشل على أي مسار غير مُعلَن — فلا يتسلّل سطح جديد.
+Scripts and `curl` authenticate with `Authorization: Bearer $MIHAKK_DASHBOARD_TOKEN`. Browsers use a cookie plus CSRF token. Both use the same secret, with no testing-only bypass; pytest tests authenticate for real. A bearer header is not ambient browser authority: browsers attach cookies automatically but do not attach an arbitrary `Authorization` header to cross-site requests.
 
-### السكربتات و`curl` بعد المصادقة
+### Render data as text, never markup
 
-مسارا اعتماد، **السرّ نفسه ولا تجاوز**: المتصفح بكعكة + CSRF، والسكربتات بـ
-`Authorization: Bearer $MIHAKK_DASHBOARD_TOKEN`. والرمز الحامل **ليس ثغرة CSRF** لأن
-CSRF يستغل الاعتماد **المحيطي**: المتصفح يرفق الكعكات وحده ولا يرفق `Authorization`
-أبدًا. ولا `if TESTING: skip` في أي موضع — اختبارات pytest تصادق فعلًا.
+The static report's “no JavaScript” defense does not apply to the interactive dashboard. Instead, every API value reaches the page through `textContent` or `setAttribute` on an element created by dashboard code. There is no `innerHTML`, `insertAdjacentHTML`, `document.write`, `eval`, or string passed to `setTimeout`. `scripts/check_dashboard_js.py` enforces this structurally without a browser and has a negative control proving it catches `document.write`.
 
-### العرض الآمن: لا تحويل بيانات إلى وسوم
+A real response-header CSP uses `script-src 'self'` with no inline code or eval, `connect-src 'self'`, and `default-src 'none'`.
 
-دفاع التقرير قام على **غياب** JS و`default-src 'none'`؛ لا ينتقل إلى اللوحة. البديل
-ليس تنقية أفضل بل **إزالة السياق التنفيذي من مسار البيانات**: كل قيمة تصل الصفحة عبر
-`textContent` أو `setAttribute` على عنصر أنشأه الكود، و**بلا `innerHTML`** ولا
-`insertAdjacentHTML` ولا `document.write` ولا `eval` ولا سلسلة في `setTimeout`.
+Target bytes can themselves say “vulnerability detected.” They must remain visible without becoming Mihakk's judgment. The UI keeps raw target output in `data-origin="target"`, under a label explaining that it is **raw target output, not Mihakk's assessment**. Mihakk's own verdict is in `data-origin="mihakk"`. Tests ensure target text never enters the verdict region. Dashboard-authored text makes no confirmed-vulnerability claim; raw target text is checked for non-executable rendering, not censored.
 
-و`scripts/check_dashboard_js.py` **حارس بنيوي** يرفضها في المصدر، يعمل في ثانية بلا
-متصفح — فهو الذي يحرس كل commit. واختباره كشف خللًا فيه نفسه: النمط كان `writeln?`
-فيطابق «writel» ويفوت `document.write` تمامًا.
+### Starting and viewing a run
 
-**والسياسة ترويسة استجابة حقيقية:** `script-src 'self'` بلا inline ولا eval،
-و`connect-src 'self'` فلا يخاطب المتصفح إلا المنسّق، و`default-src 'none'`.
+The dashboard does **not** generate an authorization acknowledgement or scope digest. An operator uploads their configuration and reviews **scope, acknowledgement, limits, and default values** such as `mutations_per_target 8` and `max_value_bytes 512` before starting. The seed is generated with `crypto.getRandomValues` and displayed before and after start so reproduction remains possible. The engine's refusal is shown without reinterpretation.
 
-### مخرجات الهدف مفصولة عن الحكم
+Samples are where secrets may live, so their contents are **never shown**: only counts, IDs, and digests. Inputs are not placed in `localStorage`, `sessionStorage`, URLs, or the console. Scope and acknowledgement are treated as private operator data too—a path prefix or free-form statement might contain a token. “Clearing memory” in JavaScript means dropping references and displayed data; it does **not** guarantee the browser erased bytes from memory.
 
-بايتات الهدف قد تحوي «vulnerability detected» **بلا نفي**، ويجب أن تبقى ظاهرة دون أن
-تُقرأ حكمًا من الأداة. فالفصل **بنيويّ**: منطقة بسمة `data-origin="target"` وعنوان يقول
-إنها **مخرجات الهدف الخام لا تقييم Mihakk**، ومعالجة بصرية مميّزة. ومنطقة الحكم
-`data-origin="mihakk"`، واختبار يؤكّد أن لا نصّ من الهدف يقع داخلها.
+Local-only SVG charts show request counts over time and indicator distributions. There is no npm dependency or external chart resource. JavaScript does not recompute completeness or confidence; it displays server answers. Neutral, uniform bar colors keep a count from being mistaken for severity.
 
-ولذلك انقسم معيار «لا تأكيد» قسمين: **ما تؤلّفه اللوحة** لا يحمل حالة `confirmed` ولا
-ادّعاءً إيجابيًا، و**البيانات الخام** تُفحص أنها نصّ غير تنفيذي **فقط** — لا يُفرض عليها
-نفي ولا تُنقَّى.
+### Browser test
 
-### البدء من اللوحة
+`scripts/test-dashboard-browser.sh` loads the dashboard in Chromium against a real orchestrator and a fake engine that streams hostile payloads into every field. It checks actual execution (`window.__pwned`), escaped visible text, delivered CSP headers, and separation of target output from Mihakk judgment. It does **not** reject a literal `javascript:` in page text; safely visible hostile text is the correct outcome.
 
-اللوحة **لا تولّد** إقرارًا ولا بصمة. المشغّل يرفع إعداداته، وتعرض اللوحة **النطاق
-والإقرار والحدود** للمراجعة، و**تعرض الافتراضات بقيمها** (‏`mutations_per_target 8`،
-`max_value_bytes 512`، …) فلا يبدأ تشغيل بإعدادات لم يرها أحد. والبذرة تُولَّد بـ
-`crypto.getRandomValues` وتُعرض قبل البدء وبعده — بلا بذرة مسجَّلة لا إعادة إنتاج.
-والمحرك هو الحكم: **رفضه يُعرض كما هو**.
+The browser suite may need to obtain a Chromium image. It is separate from the fast suites; the structural JavaScript check covers the central no-markup property quickly and offline.
 
-**والعينات موضع الأسرار، فلا يُعرض محتواها إطلاقًا** — عدد ومعرّفات وبصمة فقط. ولا
-مدخلات في `localStorage` ولا `sessionStorage` ولا URL ولا `console`. والنطاق والإقرار
-يُعاملان **بيانات خاصة بالمشغّل** لا «خالية من الأسرار بحكم نوعها»: بادئة مسار قد تحمل
-رمزًا، و`statement` نصّ حرّ.
-
-> **ودقّةٌ في العبارة:** «مسح الذاكرة» في JavaScript يعني إزالة المراجع وما تعرضه
-> الصفحة عند انتهاء الحاجة. **ليس ضمانًا** أن البايتات مُحيت من ذاكرة المتصفح.
-
-### الرسوم: أعداد لا أحكام
-
-رسم زمني للطلبات وتوزيع للمؤشرات، **بملفات محلية فقط** (SVG مبنيّ يدويًا، بلا npm ولا
-مورد خارجي). و**لا JavaScript يعيد حساب الاكتمال أو الثقة** — تُعرض كما أعادتها
-الخلفية. والرسوم عناصر تؤلّفها اللوحة فتخضع لقاعدة عدم الإيحاء: **لون واحد محايد لكل
-عمود**، فالحجم عددٌ لا خطورة، و«الثقة» ثقةٌ في الملاحظة.
-
-### اختبار المتصفح
-
-`scripts/test-dashboard-browser.sh` يحمّل اللوحة في Chromium أمام منسّق حقيقي ومحرك
-مزيّف يبثّ حمولة عدائية في كل حقل، ويسأل ما لا يجيبه إلا متصفح: هل نُفّذ شيء
-(`window.__pwned`)، وهل بقيت الحمولة **نصًّا**، وهل **وصلت** ترويسة CSP، وهل الفصل
-قائم. **ولا يبحث في نصّ الصفحة** عن `javascript:` — الصفحة ملزَمة بإبقاء الحمولة
-مرئية، فالبحث النصّي كان سيرفض الجواب الصحيح.
-
-> ⚠️ **أول اختبار يحتاج صورة متصفح من الشبكة**، فهو في سكربت مستقل خارج المجموعات
-> السريعة. والحارس البنيوي يغطّي الخاصية نفسها في ثانية، فالانحدار اليومي لا يعتمد عليه.
-
-
-## تشغيل الاختبارات
+## Tests
 
 ```bash
-./scripts/test-all.sh            # السريعة: 5 مجموعات (المحرك، المنسّق، testbed، الأسرار، API المحلي)
-./scripts/test-all.sh --all      # ومعها مجموعات Docker الحيّة: 14 مجموعة
-./scripts/test-all.sh --browser  # ومعها اختبار المتصفح: 15 مجموعة
+./scripts/test-all.sh            # 5 fast suites: engine, orchestrator, testbed, secrets, loopback API
+./scripts/test-all.sh --all      # 14 suites including live Docker tests
+./scripts/test-all.sh --browser  # 15 suites including Chromium
 ```
 
-تتضمن مجموعة `live-orchestrator` اختبارات حية: إغلاق اتصال
-NDJSON **لعميل مراقبة منفصل** ثم فتحه مع `from_seq`، وإعادة تشغيل المنسّق أثناء
-جلستين نشطتين، والتحقق من تداخلهما واكتمال أحداثهما وحالاتهما. إغلاق ذلك العميل
-لم يكن اختبارًا لانقطاع بث المنسّق نفسه. جميعها تعمل على تطبيق التجربة داخل مشروع
-Compose مؤقت، ولا تلمس تطبيقًا عامًا.
+`live-orchestrator` closes and resumes an NDJSON connection held by a **separate monitoring client** with `from_seq`. It also restarts the orchestrator during two active sessions and checks overlap, contiguous events, and completed cases. Closing that monitor is **not** the same as interrupting the orchestrator's own follower stream.
 
-`live-faults` مجموعة مستقلة تضيف وسيط Unix-socket داخل مشاريع اختبار مؤقتة:
-تقطع بث **المنسّق نفسه**، وتثبت استمرار المحرك والاستئناف من آخر رقم محفوظ،
-وتختبر إعادة التشغيل والتزامن وتعذّر الاستئناف. لكل سيناريو نسخة معطّلة عمدًا
-يجب أن تفشل عند شرطه المقصود، ويتحقق الاختبار من إزالة موارده وعدم تغيّر بيانات
-volume جار أو موارد Docker الموجودة قبل السيناريو.
+`live-faults` adds a Unix-socket fault proxy **only inside temporary test projects**. It cuts the orchestrator's actual follower stream, proves that the engine continues, and checks resumption from the last stored contiguous sequence. It also tests orchestrator restart, genuinely overlapping sessions with distinct events and results, and an unavailable resume that ends with a clear reason rather than remaining `running`. A deliberately broken variant of each scenario must fail for its intended reason. Each scenario checks cleanup and preservation of previously existing Docker resources and a neighboring volume.
 
-`loopback-api` اختبار محلي مستقل يحقن بروكسي HTTP يعيد `500`: يتأكد أن العميل
-الافتراضي يمرّ به، بينما مساعدا الاختبار يصلان إلى API على `127.0.0.1` مباشرةً
-بعد التحقق من الوجهة، دون تغيير إعداد البروكسي العام أو اتصال المحرك بالأهداف.
-ويفحص ظهور تشخيص آمن عند رفض إقرار تفويض مستقبلي، بلا إعادة محاولة تلقائية.
+`loopback-api` injects an HTTP proxy returning 500. It proves an ordinary client uses the proxy while two test helpers, after verifying a loopback destination, reach the local API directly without sending the proxy anything. It does not change the engine's target connections or global proxy settings. It also checks safe clock diagnostics when an authorization acknowledgement is rejected as being in the future, with no automatic retry or weaker authorization rule.
 
-`operations-quickstart` ينفّذ أوامر [المسار التجريبي المحلي](docs/operations.md#مسار-تجريبي-كامل-على-testbed-المحلي)
-كما هي موثّقة، داخل مشروع مؤقت: يولّد سرّين خارج المستودع، يبدأ المكدّس،
-يشغّل جلسة مصرحًا بها على `testbed` المضمّن، يتابعها، ويفتح تقريري JSON وHTML
-ويتحقق من وصف النتائج كمؤشرات تحتاج تحققًا. يفحص حفظ بيانات Mihakk وتطبيق مجاور
-بعد الإيقاف وفشل `up` المحقون، وينظّف موارده وحدها. لا يُستخدم هدف عام.
+`operations-quickstart` executes the documented [local testbed walkthrough](docs/operations.md) in a temporary Compose project: secrets are generated outside the repository; the stack starts; an authorized run against the bundled testbed is followed; JSON and HTML reports are opened and checked for “indicators requiring verification.” It checks that Mihakk data and a neighboring owner's application survive shutdown and an injected startup failure, and cleans only its own resources. It uses **no public target** and does not create an acknowledgement on behalf of a real application's owner.
 
-وبعد المجموعات يبحث المشغّل عن رمزَي التشغيل في كل سجل وكل ملف متتبَّع (`secret-scan`).
+After all suites, `secret-scan` searches for the run's two tokens in every retained log and every tracked file. The runner stores the **complete output and exit code of each suite** and prints a failed suite's entire log, not just its tail. `scripts/test-runner-output.sh` checks this with a simulated failure; truncating output previously hid the actual failing check.
 
-المشغّل **يحفظ مخرجات كل مجموعة كاملةً ورمز خروجها**، ويطبع مخرجات الفاشلة **كاملة لا
-ذيلها**. هذا ليس تحسينًا شكليًا: مرتين فُقد سبب فحص فاشل لأن أمر التشغيل كان يمرّر
-المخرجات عبر `tail`، فلم يُعرف أي فحص فشل. و`scripts/test-runner-output.sh` يثبت بفشل
-مُحاكى أن اسم الفحص وسببه لا يضيعان.
+The tests above are local and isolated. Passing them does **not** verify a production deployment or an external target. Unverified areas, including actual IPv6 routing, backup restoration, and migration, remain documented in the operations guide.
 
-## المتطلبات
+## Requirements
 
-**Docker مع Compose، وBash وPython 3 و`curl` على الجهاز.** لا حاجة لتثبيت Go على
-الجهاز — البناء والاختبارات تعمل داخل حاوية، مع `--network none` حتى لا تلمس
-اختبارات المحرك الشبكة إطلاقًا.
+Docker with Compose, plus Bash, Python 3, and `curl` on the host. Go does not need to be installed on the host: engine builds and tests run in a container with `--network none`.
 
-## التشغيل الحالي
+## Running locally
 
-### المكدّس
+### Start the stack
 
 ```bash
-./scripts/init-secrets.sh                  # الرمزان في ~/.config/mihakk/secrets.env (0600)، لا يطبع أيًّا منهما
-./scripts/stack.sh up                      # يقرأ الملف بمحلّل صارم (لا source)، ويشغّل Compose
-./scripts/show-dashboard-token.sh          # رمز الدخول — في طرفية فقط
-# ثم http://127.0.0.1:8100/ (أو MIHAKK_PORT)
+./scripts/init-secrets.sh           # Creates two tokens in ~/.config/mihakk/secrets.env (0600); prints neither
+./scripts/stack.sh up               # Strictly parses that file; never sources it
+./scripts/show-dashboard-token.sh   # Displays the dashboard login token in a terminal only
+# Open http://127.0.0.1:8100/ (or the port selected by MIHAKK_PORT).
 ./scripts/stack.sh status
-./scripts/stack.sh down                    # بلا -v: بيانات المحرك والمنسّق تبقى
+./scripts/stack.sh down             # No -v: engine and orchestrator data remain
 ```
 
-لخطوات جلسة كاملة على `testbed` المحلي، مع بصمة نطاق وإقرار محلي وعينات وبذرة
-وتقريري JSON/HTML، اتبع [المسار التجريبي في دليل التشغيل](docs/operations.md#مسار-تجريبي-كامل-على-testbed-المحلي).
-لا تنسخ إقراره إلى تطبيق تملكه أو هدف عام؛ تفويضهما قرار منفصل من مالكهما.
+For an entire local session—including scope digest, local acknowledgement, samples, seed, and JSON/HTML reports—follow the [testbed walkthrough in the operations guide](docs/operations.md). Do **not** reuse its acknowledgement for an application you own or a public target; authorization for those is a separate decision by their owner.
 
-تطبيق تملكه في مشروع Compose خاص به: أنشئ شبكة **داخلية** وألحقه بها بنفسك، ثم:
+For an application you operate in another Compose project, create and attach an **internal** target network yourself, then start Mihakk against that existing network:
 
 ```bash
 docker network create --internal my-target
@@ -840,76 +426,68 @@ docker network connect my-target my-app-container
 ./scripts/stack.sh up --target-network my-target
 ```
 
-`stack.sh` يرفض الشبكة إن لم يرها Docker داخلية أو تعذّر فحصها، ولا ينشئ شبكة ولا
-يصل حاوية ولا يفصلها. ويبقى العنوان مشروطًا بتصريحه في `allowed_addresses`.
+`stack.sh` rejects a network it cannot verify as an internal Docker network. It does not create the network, attach the application, or disconnect it. The target address must also be explicitly permitted by `allowed_addresses` where required.
 
-### المحرك من سطر الأوامر
+### Engine CLI
 
 ```bash
-# فحص كامل: تنسيق + vet + اختبارات + كاشف التسابق + بناء
+# Format, vet, test, race-test, and build the engine.
 ./scripts/test-engine.sh
 
-# التحقق من ملف إعدادات دون إرسال أي طلب
+# Validate a configuration without sending any request.
 ./scripts/go.sh run ./cmd/mihakk scope-check -config testdata/session.example.json
 
-# هل هذا العنوان داخل النطاق؟
+# Check whether a URL is within that configuration's scope.
 ./scripts/go.sh run ./cmd/mihakk scope-check \
   -config testdata/session.example.json \
   -check-url "http://testbed:8000/api/items"
 ```
 
 ```bash
-# افحص خطة التحوير دون إرسال أي طلب
+# Inspect a mutation plan without sending any request.
 ./scripts/go.sh run ./cmd/mihakk plan \
   -corpus testdata/corpus.example.json -seed demo-seed-1
 
-# تحقق من الحتمية بنفسك: عمليتان منفصلتان، مقارنة بايتًا ببايت
+# Run the same plan in separate processes and compare byte-for-byte digests.
 ./scripts/go.sh run ./cmd/mihakk plan -corpus testdata/corpus.example.json \
   -seed demo-seed-1 -dump | shasum -a 256
 ```
 
 ```bash
-# اختبارات تطبيق التجربة (داخل حاوية، بلا شبكة)
+# Test the testbed inside a network-free container.
 ./scripts/test-testbed.sh
 
-# التحقق من عزل تطبيق التجربة
+# Verify testbed isolation.
 ./scripts/verify-testbed-isolation.sh
 ```
 
-`scripts/go.sh` يمرّر أي أمر إلى Go داخل الحاوية.
+`scripts/go.sh` forwards its arguments to Go inside the container.
 
-## البنية
+## Repository layout
 
+```text
+engine/              Go engine: the only component that contacts a target
+  internal/safety/    Scope, limits, authorization, redaction, guarded client
+  internal/corpus/    Valid samples and their digest
+  internal/mutate/    Deterministic case generation
+  internal/runner/    Execution and reproduction
+  internal/detect/    Baselines and indicators
+  internal/store/     Saved sessions and cases
+  internal/audit/     Audit trail
+  internal/events/    Bounded, sequenced event stream
+  internal/api/       Unix-socket Control API
+orchestrator/        FastAPI service, SQLite, classification, and reports; never contacts a target
+dashboard/           Lightweight web UI
+testbed/             Isolated local app with two planted behaviors and a comparison endpoint
+deploy/              Docker Compose; compose.target.yml joins an owner's internal network
+schemas/             Contracts shared across services
+scripts/             Stack management, containerized tools, and tests
 ```
-engine/        محرك Go: كل ما يلمس الشبكة
-  internal/safety/   النطاق والحدود والتفويض والإخفاء — المرحلة ١
-  internal/corpus/   عينات الطلبات الصحيحة وبصمتها — المرحلة ٢
-  internal/mutate/   التوليد الحتمي للتحويرات — المرحلة ٢
-  internal/runner/   التنفيذ وإعادة الإنتاج — المرحلة ٤
-  internal/detect/   خط الأساس والمؤشرات — المرحلة ٤
-  internal/store/    الجلسات والحالات المحفوظة — المرحلة ٤
-  internal/audit/    سجل التدقيق — المرحلة ٤
-  internal/events/   بث الأحداث والمخزن المُقيَّد — المرحلة ٥
-  internal/api/      الـControl API — المرحلة ٥
-orchestrator/    منسّق FastAPI + SQLite — المرحلة ٥
-orchestrator/  خدمة Python/FastAPI: تخزين وتحليل وتقارير — لا تلمس الهدف
-dashboard/     واجهة عربية خفيفة
-testbed/       تطبيق تجربة محلي معزول (سلوكان مزروعان + مسار مقارنة)
-deploy/        Docker Compose — شبكة داخلية بلا منافذ منشورة؛ compose.target.yml لشبكة المالك
-schemas/       العقد المشترك بين الخدمات
-scripts/       تشغيل أدوات Go والاختبارات داخل Docker
-```
 
-## خارج نطاق الـMVP
+## Outside this MVP
 
-generation-based وcoverage-guided fuzzing، وتوصيات إصلاح بالذكاء الاصطناعي،
-وتكامل CI/CD وأنظمة تتبع المشكلات، ودعم WebSocket وgRPC. المعمارية تترك مكانًا
-لها دون تنفيذها الآن.
+Generation-based and coverage-guided fuzzing, AI-generated remediation advice, CI/CD and issue-tracker integrations, WebSocket, and gRPC are not implemented. The architecture leaves room for them without claiming they exist today.
 
-## الترخيص
+## License
 
-الأجزاء الأصلية من محكّ، بما فيها شيفرة المشروع ووثائقه، مرخّصة بموجب MIT؛
-انظر [LICENSE](LICENSE). لا يشمل إشعار حقوق Rawabi Alharbi ملكية أي مكوّن خارجي
-مضمّن. تحتفظ مكتبة `yaml.v3` المضمّنة بتراخيصها ونِسب أصحابها المستقلة في
-[LICENSE الخاص بها](engine/vendor/gopkg.in/yaml.v3/LICENSE) و
-[NOTICE](engine/vendor/gopkg.in/yaml.v3/NOTICE)، دون تعديل.
+The original Mihakk code and documentation are licensed under the [MIT License](LICENSE). Created by Rawabi Alharbi. This copyright notice does **not** claim ownership of bundled third-party components. The vendored `yaml.v3` library retains its own licenses and attributions in its [LICENSE](engine/vendor/gopkg.in/yaml.v3/LICENSE) and [NOTICE](engine/vendor/gopkg.in/yaml.v3/NOTICE), unchanged.
