@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css">
+<title>Mihakk</title>
+</head>
+<body>
+<header>
+  <h1>Mihakk</h1>
+  <p class="note" id="standing-note">Results are indicators that need
+  verification, not confirmed vulnerabilities.</p>
+  <div class="header-actions">
+    <span id="staleness" class="staleness" data-state="fresh"></span>
+    <button type="button" id="logout">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <section id="list-view">
+    <h2>Sessions</h2>
+    <div id="sessions-state" class="state"></div>
+    <table id="sessions-table">
+      <thead>
+        <tr><th>Session</th><th>Status</th><th>Findings</th><th>Complete</th><th>Requests</th><th></th></tr>
+      </thead>
+      <tbody id="sessions-body"></tbody>
+    </table>
+
+    <h2>Start a session</h2>
+    <p class="sub">The engine verifies the authorisation, the scope and the
+    limits, and refuses anything it is not authorised to do. Nothing here
+    composes an acknowledgement: it is read from the file you supply and shown
+    for you to check.</p>
+    <div id="start-form"></div>
+  </section>
+
+  <section id="detail-view" hidden>
+    <button type="button" id="back">Back to sessions</button>
+    <h2 id="detail-title"></h2>
+    <div id="detail-state" class="state"></div>
+    <div id="detail-body"></div>
+  </section>
+</main>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

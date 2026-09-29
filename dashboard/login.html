@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/assets/login.css">
+<title>Mihakk — sign in</title>
+</head>
+<body>
+<main>
+  <h1>Mihakk</h1>
+  <p class="sub">Defensive fuzzing for web applications. Results are indicators
+  that need verification, not confirmed vulnerabilities.</p>
+
+  <!-- No JavaScript on this page, by design. It is the only page reachable
+       without credentials, so it carries the smallest surface that can still do
+       its job: one form, one stylesheet, and a policy that forbids script
+       outright. The hidden field is paired with a cookie so a sign-in cannot be
+       forced from another site. -->
+  <form method="post" action="/auth/login">
+    <input type="hidden" name="csrf_token" value="{{CSRF}}">
+    <label for="token">Dashboard token</label>
+    <input id="token" name="token" type="password" autocomplete="current-password"
+           autofocus required>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p class="note">The dashboard token is not the engine's control token. The
+  control token never reaches a browser.</p>
+</main>
+</body>
+</html>

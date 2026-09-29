@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mihakk.local/schemas/aggregate.schema.json",
+  "title": "Mihakk aggregate",
+  "description": "One session's stored cases, grouped by the engine and not yet judged. Served at GET /v1/runs/{id}/aggregate. It is a pure function of the stored session and case log: no timestamp of its own, and groups in a fixed order, so two exports of the same session are identical bytes. It is a view of the results, never a filter -- every group carries the complete list of case ids it covers, and the declared totals let a reader check the groups rather than trust them.",
+  "type": "object",
+  "required": ["aggregate_version", "session", "scope", "completeness", "totals", "groups", "note"],
+  "properties": {
+    "aggregate_version": { "const": "1" },
+
+    "session": {
+      "type": "object",
+      "description": "What the run was. Nothing scope-shaped lives here; the scope has its own block because how far it can be trusted needs saying.",
+      "required": ["session_id", "engine_version", "started_at", "status", "planned_cases", "saved_cases"],
+      "properties": {
+        "session_id": { "type": "string" },
+        "engine_version": { "type": "string" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string" },
+        "operator": { "type": "string" },
+        "corpus_digest": { "type": "string" },
+        "config_digest": { "type": "string" },
+        "planned_cases": { "type": "integer", "minimum": 0 },
+        "executed_cases": { "type": "integer", "minimum": 0, "description": "Legacy terminal case count: cases that did not end in a local or safety refusal. Use accounting.cases_attempted for cases with any actual HTTP attempt." },
+        "saved_cases": { "type": "integer", "minimum": 0 },
+        "refused_cases": { "type": "integer", "minimum": 0, "description": "Cases that ended in a local or safety refusal. A redirected case can have earlier answered HTTP hops; consult accounting.http_* before saying nothing was attempted." },
+        "accounting": {
+          "type": ["object", "null"],
+          "description": "What became of the run's requests beyond the case counts. null means the session predates the count -- NOT counted, which a reader must never present as zero. Attempted means the safety layer let it through (a refused connection is an attempt); answered means a response was observed. cases_* and baseline_* count cases; http_* count HTTP requests, one per redirect hop.",
+          "required": ["cases_attempted", "cases_answered", "baseline_attempted", "baseline_refused", "baseline_answered", "http_answered", "http_unanswered", "http_refused"],
+          "properties": {
+            "cases_attempted": { "type": "integer", "minimum": 0, "description": "Cases with at least one actual HTTP attempt. It can overlap refused_cases when an earlier redirect hop was attempted before a later hop was locally refused." },
+            "cases_answered": { "type": "integer", "minimum": 0, "description": "Cases that completed with a final response. Intermediate redirect responses are counted separately in http_answered." },
+            "baseline_attempted": { "type": "integer", "minimum": 0 },
+            "baseline_refused": { "type": "integer", "minimum": 0 },
+            "baseline_answered": { "type": "integer", "minimum": 0, "description": "Baseline requests that completed with a final response. Intermediate redirect responses are counted separately in http_answered." },
+            "http_answered": { "type": "integer", "minimum": 0 },
+            "http_unanswered": { "type": "integer", "minimum": 0 },
+            "http_refused": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+
+    "scope": {
+      "type": "object",
+      "description": "What the run was allowed to reach, and how far this description can be trusted. `recorded` and `consistent` answer different questions and neither implies the other.",
+      "required": ["recorded", "consistent", "digest", "targets_summary"],
+      "properties": {
+        "recorded": {
+          "type": "boolean",
+          "description": "Whether the engine stored the scope its guarded client enforced. False for sessions written by an engine that did not record it; such a document carries targets_summary only and must NOT be presented as the run's full scope."
+        },
+        "consistent": {
+          "type": "boolean",
+          "description": "Whether the stored scope still hashes to the digest stored beside it. This is a statement about the record being internally coherent and nothing more. That the description is what actually governed the traffic is established by the engine taking it from the enforcing client, and is tested there; a matching digest is not evidence of it. A consumer must never present an inconsistent scope as the session's scope."
+        },
+        "inconsistency_reason": {
+          "type": "string",
+          "description": "Present whenever consistent is false, saying what could not be established rather than leaving a bare flag."
+        },
+        "digest": { "type": "string", "description": "The digest the session record stored." },
+        "recomputed_digest": { "type": "string", "description": "What the stored scope hashes to now. Shown so a reader can see the comparison instead of taking `consistent` on trust." },
+        "max_redirects": { "type": "integer", "minimum": 0 },
+        "targets": {
+          "type": "array",
+          "description": "The structural scope, present only when recorded. Deliberately without allowed_addresses: those are the operator's internal addressing, they say nothing about a finding, and a report is the kind of thing that gets forwarded. The digest above still covers them, so withholding them cannot make a different scope hash the same.",
+          "items": {
+            "type": "object",
+            "required": ["scheme", "host", "port", "path_prefixes", "methods"],
+            "additionalProperties": false,
+            "properties": {
+              "scheme": { "type": "string" },
+              "host": { "type": "string" },
+              "port": { "type": "integer" },
+              "path_prefixes": { "type": "array", "items": { "type": "string" } },
+              "methods": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "targets_summary": {
+          "type": "array",
+          "description": "The readable authority list, always present. All a pre-scope session has.",
+          "items": { "type": "string" }
+        },
+        "withheld": {
+          "type": "array",
+          "description": "Fields deliberately left out of a shareable document, named so their absence is visible.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "completeness": {
+      "type": "object",
+      "description": "The ENGINE's account of whether it wrote down everything it saw. It says nothing about whether a consumer received everything the engine emitted -- that is the orchestrator's half, and a report needs both, with the worse of the two winning.",
+      "required": ["engine_status", "saved_cases_stated", "cases_in_store", "consistent"],
+      "properties": {
+        "engine_status": { "type": "string" },
+        "saved_cases_stated": { "type": "integer", "minimum": 0 },
+        "cases_in_store": { "type": "integer", "minimum": 0 },
+        "unsaved_cases": { "type": "integer", "minimum": 0, "description": "Indicators the engine observed and could not write down. Any number above zero means the stored results are a subset of what the run saw." },
+        "audit_failures": { "type": "integer", "minimum": 0 },
+        "incomplete_reason": { "type": "string" },
+        "consistent": { "type": "boolean", "description": "Whether the case log holds as many cases as the record says were saved: a third comparison, independent of both status fields." },
+        "reason": { "type": "string", "description": "Why consistent is false." }
+      }
+    },
+
+    "totals": {
+      "type": "object",
+      "description": "Declared so the groups can be checked against them rather than believed. A consumer that finds them disagreeing must treat the document as broken, not reconcile it.",
+      "required": ["cases", "indicator_instances", "groups"],
+      "properties": {
+        "cases": { "type": "integer", "minimum": 0 },
+        "indicator_instances": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number of (case, indicator) pairs. One case can carry several indicators, so this is the figure the groups' occurrences sum to -- not the case count."
+        },
+        "groups": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "groups": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": ["group_id", "signature", "occurrences", "case_ids", "representative"],
+        "properties": {
+          "group_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$", "description": "A hash of the signature, so the same signature groups identically in any process and the group order is stable." },
+          "signature": {
+            "type": "object",
+            "description": "What makes two indicators the same kind of observation. The raw URL is not part of it: every mutation changes the query string, so grouping on it would put each case in a group of its own and aggregate nothing.",
+            "required": ["indicator_type", "target", "method", "path"],
+            "properties": {
+              "indicator_type": { "enum": ["http_5xx", "timeout", "connection_error", "app_error_pattern", "latency_anomaly", "size_anomaly"] },
+              "target": { "type": "string", "description": "Which sample and field the mutation was applied to." },
+              "method": { "type": "string" },
+              "path": { "type": "string", "description": "The request path with its query removed." },
+              "status_code": { "type": ["integer", "null"], "description": "Part of the signature only where it separates genuinely different failures, such as a 500 from a 503." }
+            }
+          },
+          "occurrences": { "type": "integer", "minimum": 1, "description": "How many (case, indicator) pairs fell in this group." },
+          "case_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" },
+            "description": "Complete and sorted. Truncating it here would be the hiding that grouping must not become: a renderer may show fewer, and must then say how many it left out."
+          },
+          "representative": {
+            "type": "object",
+            "description": "Where a reader should start: the lowest case index in the group, because the mutation for an index is a pure function of it, so the earliest is the cheapest to regenerate.",
+            "required": ["case_id", "case_index", "reason"],
+            "properties": {
+              "case_id": { "type": "string" },
+              "case_index": { "type": "integer", "minimum": 0 },
+              "reason": { "type": "string", "description": "The engine's plain-language account of what was seen and what it was compared against. May contain bytes taken from the target's own response, so a renderer must treat it as untrusted text." },
+              "baseline": { "type": ["object", "null"] },
+              "reproduction": { "type": "object" },
+              "request_summary": { "type": "object" },
+              "response_summary": { "type": "object" }
+            }
+          },
+          "first_observed_at": { "type": "string", "format": "date-time" },
+          "last_observed_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+
+    "note": {
+      "type": "string",
+      "description": "Travels with every document. The engine records observations; calling one a vulnerability is a judgement it is not entitled to make. There is deliberately no confidence, priority or severity anywhere in this document."
+    }
+  }
+}

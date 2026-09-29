@@ -1,0 +1,297 @@
+{
+  "aggregate_version": "1",
+  "session": {
+    "session_id": "golden",
+    "engine_version": "0.6.0-golden",
+    "started_at": "2026-01-01T00:00:00Z",
+    "ended_at": "2026-01-01T00:01:30Z",
+    "status": "completed",
+    "operator": "golden-operator",
+    "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "planned_cases": 136,
+    "executed_cases": 134,
+    "saved_cases": 5,
+    "refused_cases": 2,
+    "accounting": {
+      "cases_attempted": 134,
+      "cases_answered": 130,
+      "baseline_attempted": 9,
+      "baseline_refused": 3,
+      "baseline_answered": 9,
+      "http_answered": 141,
+      "http_unanswered": 4,
+      "http_refused": 3
+    }
+  },
+  "scope": {
+    "recorded": true,
+    "consistent": true,
+    "digest": "sha256:e53645cbadbed78c489575252b8164499c8164acba83825dc7b64e1d439ec736",
+    "recomputed_digest": "sha256:e53645cbadbed78c489575252b8164499c8164acba83825dc7b64e1d439ec736",
+    "max_redirects": 2,
+    "targets": [
+      {
+        "scheme": "http",
+        "host": "testbed",
+        "port": 8000,
+        "path_prefixes": [
+          "/api"
+        ],
+        "methods": [
+          "GET",
+          "POST"
+        ]
+      }
+    ],
+    "targets_summary": [
+      "http://testbed:8000"
+    ],
+    "withheld": [
+      "allowed_addresses"
+    ]
+  },
+  "completeness": {
+    "engine_status": "completed",
+    "saved_cases_stated": 5,
+    "cases_in_store": 5,
+    "unsaved_cases": 0,
+    "audit_failures": 0,
+    "consistent": true
+  },
+  "totals": {
+    "cases": 5,
+    "indicator_instances": 6,
+    "groups": 5
+  },
+  "groups": [
+    {
+      "group_id": "sha256:45cd2819c9cf50f1af99f77499d15306c11dec374c73eef0320f1b5e7d580be0",
+      "signature": {
+        "indicator_type": "latency_anomaly",
+        "target": "items query/limit",
+        "method": "GET",
+        "path": "/api/items",
+        "status_code": null
+      },
+      "occurrences": 1,
+      "mutators": [
+        "oversize"
+      ],
+      "case_ids": [
+        "golden-000019"
+      ],
+      "representative": {
+        "case_id": "golden-000019",
+        "case_index": 19,
+        "reason": "the engine observed latency_anomaly on this request",
+        "reproduction": {
+          "engine_version": "0.6.0-golden",
+          "master_seed": "6d6968616b6b",
+          "case_index": 19,
+          "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target": "items query/limit (oversize)"
+        },
+        "request_summary": {
+          "method": "GET",
+          "url": "http://testbed:8000/api/items?page=%00",
+          "body_bytes": 0,
+          "redacted": true
+        },
+        "response_summary": {
+          "status_code": 200,
+          "latency_ms": 12.5,
+          "body_bytes": 40,
+          "truncated": false,
+          "error": null
+        }
+      },
+      "first_observed_at": "2026-01-01T00:00:04Z",
+      "last_observed_at": "2026-01-01T00:00:04Z"
+    },
+    {
+      "group_id": "sha256:53846ce0133dac279d017242f0649aa98c353b38fd1c543c7d5e3073a740aa65",
+      "signature": {
+        "indicator_type": "latency_anomaly",
+        "target": "items query/page",
+        "method": "GET",
+        "path": "/api/items",
+        "status_code": null
+      },
+      "occurrences": 1,
+      "mutators": [
+        "truncate"
+      ],
+      "case_ids": [
+        "golden-000011"
+      ],
+      "representative": {
+        "case_id": "golden-000011",
+        "case_index": 11,
+        "reason": "the engine observed latency_anomaly on this request",
+        "reproduction": {
+          "engine_version": "0.6.0-golden",
+          "master_seed": "6d6968616b6b",
+          "case_index": 11,
+          "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target": "items query/page (truncate)"
+        },
+        "request_summary": {
+          "method": "GET",
+          "url": "http://testbed:8000/api/items?page=%00",
+          "body_bytes": 0,
+          "redacted": true
+        },
+        "response_summary": {
+          "status_code": 200,
+          "latency_ms": 12.5,
+          "body_bytes": 40,
+          "truncated": false,
+          "error": null
+        }
+      },
+      "first_observed_at": "2026-01-01T00:00:03Z",
+      "last_observed_at": "2026-01-01T00:00:03Z"
+    },
+    {
+      "group_id": "sha256:8478a4f1ab0f8fedf71e0a3e3091fa13748876c272e069c8c40de19ac3cbb489",
+      "signature": {
+        "indicator_type": "app_error_pattern",
+        "target": "items query/page",
+        "method": "GET",
+        "path": "/api/items",
+        "status_code": null
+      },
+      "occurrences": 1,
+      "mutators": [
+        "type-confusion"
+      ],
+      "case_ids": [
+        "golden-000003"
+      ],
+      "representative": {
+        "case_id": "golden-000003",
+        "case_index": 3,
+        "reason": "the engine observed app_error_pattern on this request",
+        "reproduction": {
+          "engine_version": "0.6.0-golden",
+          "master_seed": "6d6968616b6b",
+          "case_index": 3,
+          "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target": "items query/page (type-confusion)"
+        },
+        "request_summary": {
+          "method": "GET",
+          "url": "http://testbed:8000/api/items?page=%00",
+          "body_bytes": 0,
+          "redacted": true
+        },
+        "response_summary": {
+          "status_code": 500,
+          "latency_ms": 12.5,
+          "body_bytes": 40,
+          "truncated": false,
+          "error": null
+        }
+      },
+      "first_observed_at": "2026-01-01T00:00:01Z",
+      "last_observed_at": "2026-01-01T00:00:01Z"
+    },
+    {
+      "group_id": "sha256:ed2d68d8d06f8db108c7786b4d35c31c8468296ff5c26dfa2c753564bf6d6f5b",
+      "signature": {
+        "indicator_type": "latency_anomaly",
+        "target": "orders body/qty",
+        "method": "GET",
+        "path": "/api/orders",
+        "status_code": null
+      },
+      "occurrences": 1,
+      "mutators": [
+        "boundary-int"
+      ],
+      "case_ids": [
+        "golden-000023"
+      ],
+      "representative": {
+        "case_id": "golden-000023",
+        "case_index": 23,
+        "reason": "the engine observed latency_anomaly on this request",
+        "reproduction": {
+          "engine_version": "0.6.0-golden",
+          "master_seed": "6d6968616b6b",
+          "case_index": 23,
+          "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target": "orders body/qty (boundary-int)"
+        },
+        "request_summary": {
+          "method": "GET",
+          "url": "http://testbed:8000/api/orders?page=%00",
+          "body_bytes": 0,
+          "redacted": true
+        },
+        "response_summary": {
+          "status_code": 200,
+          "latency_ms": 12.5,
+          "body_bytes": 40,
+          "truncated": false,
+          "error": null
+        }
+      },
+      "first_observed_at": "2026-01-01T00:00:05Z",
+      "last_observed_at": "2026-01-01T00:00:05Z"
+    },
+    {
+      "group_id": "sha256:f8df3f1fa637d9f2f9b1ec52dbd09021cfbb9810828e4150660efd0872611824",
+      "signature": {
+        "indicator_type": "http_5xx",
+        "target": "items query/page",
+        "method": "GET",
+        "path": "/api/items",
+        "status_code": 500
+      },
+      "occurrences": 2,
+      "mutators": [
+        "null-byte",
+        "type-confusion"
+      ],
+      "case_ids": [
+        "golden-000003",
+        "golden-000007"
+      ],
+      "representative": {
+        "case_id": "golden-000003",
+        "case_index": 3,
+        "reason": "the engine observed http_5xx on this request",
+        "reproduction": {
+          "engine_version": "0.6.0-golden",
+          "master_seed": "6d6968616b6b",
+          "case_index": 3,
+          "corpus_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "config_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "target": "items query/page (type-confusion)"
+        },
+        "request_summary": {
+          "method": "GET",
+          "url": "http://testbed:8000/api/items?page=%00",
+          "body_bytes": 0,
+          "redacted": true
+        },
+        "response_summary": {
+          "status_code": 500,
+          "latency_ms": 12.5,
+          "body_bytes": 40,
+          "truncated": false,
+          "error": null
+        }
+      },
+      "first_observed_at": "2026-01-01T00:00:01Z",
+      "last_observed_at": "2026-01-01T00:00:02Z"
+    }
+  ],
+  "note": "Results are indicators that need verification, not confirmed vulnerabilities."
+}

@@ -1,0 +1,25 @@
+/* The login page's only asset. Served without credentials, so it is kept to
+   layout alone: no fonts, no images, nothing loaded from anywhere. */
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0; min-height: 100vh;
+  display: grid; place-items: center; padding: 1rem;
+}
+main { width: 100%; max-width: 26rem; }
+h1 { margin: 0 0 .25rem; font-size: 1.75rem; }
+.sub { margin: 0 0 1.5rem; opacity: .8; line-height: 1.5; }
+form { display: grid; gap: .5rem; }
+label { font-weight: 600; }
+input[type="password"] {
+  font: inherit; padding: .5rem .625rem;
+  border: 1px solid currentColor; border-radius: .25rem;
+  background: transparent; color: inherit; width: 100%;
+}
+button {
+  font: inherit; font-weight: 600; padding: .5rem .875rem; margin-top: .25rem;
+  border: 1px solid currentColor; border-radius: .25rem;
+  background: transparent; color: inherit; cursor: pointer;
+}
+.note { margin-top: 1.5rem; font-size: .8125rem; opacity: .75; line-height: 1.5; }

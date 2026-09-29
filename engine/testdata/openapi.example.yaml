@@ -1,0 +1,54 @@
+# The testbed's API, in the supported OpenAPI subset.
+# engine/testdata/openapi.example.json is the same document in JSON; both
+# produce an identical corpus.
+openapi: "3.0.3"
+servers:
+  - url: http://testbed:8000
+paths:
+  /api/items:
+    get:
+      operationId: listItems
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: q
+          in: query
+          schema:
+            type: string
+            example: shoes
+  /api/orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Order"
+  /api/search:
+    get:
+      operationId: search
+      parameters:
+        - name: term
+          in: query
+          schema:
+            type: string
+            example: shoes
+components:
+  schemas:
+    Order:
+      type: object
+      properties:
+        sku:
+          type: string
+          example: A-001
+        qty:
+          type: integer
+          default: 2

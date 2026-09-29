@@ -1,0 +1,34 @@
+# Overlay: let the engine reach an application the operator runs themselves.
+#
+#   scripts/stack.sh up --target-network <name>
+#
+# What this does, and what it deliberately does not:
+#
+#   - It attaches the ENGINE, and only the engine, to one network the operator
+#     created and owns. The testbed and the orchestrator are never attached.
+#   - `external: true` means compose never creates, changes or removes that
+#     network: `down` detaches the engine and leaves the network where it was.
+#     external says who owns the network, not that it is isolated, so
+#     scripts/stack.sh inspects the real network before `up` and refuses it
+#     unless Docker reports it internal -- or if it cannot be inspected at all.
+#   - The operator's application is not a service here. It stays in its own
+#     project, on its own networks, and joins this one by the operator's hand;
+#     nothing in Mihakk starts, stops, recreates or reconnects it.
+#   - A network is a path, not a permission. What the engine may send over it is
+#     decided by the session's scope, address pinning, authorisation and limits,
+#     exactly as for the testbed: the application's address still has to be
+#     authorised in allowed_addresses (a /32, or at most a /24).
+#
+# The control API is on a Unix socket, so joining this network adds no listener
+# to it: the engine's only TCP listener is the loopback liveness endpoint.
+
+services:
+  engine:
+    networks:
+      mihakk-internal: {}
+      mihakk-target: {}
+
+networks:
+  mihakk-target:
+    name: "${MIHAKK_TARGET_NETWORK:?set MIHAKK_TARGET_NETWORK (use scripts/stack.sh up --target-network NAME)}"
+    external: true

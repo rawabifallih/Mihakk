@@ -1,0 +1,29 @@
+# Go build artifacts
+/engine/bin/
+/.gocache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local runtime data (sessions, cases, audit logs, reports)
+/data/
+*.db
+*.sqlite3
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets. The stack's tokens live outside the repository (scripts/init-secrets.sh
+# puts them in ~/.config/mihakk/secrets.env and refuses any path inside a git
+# working tree); these patterns are the second line, for a file made by hand.
+# scripts/check_no_tracked_secrets.py fails if one is tracked anyway (git add -f).
+.env
+.env.*
+*.env

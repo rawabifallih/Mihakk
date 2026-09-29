@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mihakk.local/schemas/case.schema.json",
+  "title": "Mihakk case",
+  "description": "One saved request that produced an indicator, stored as a regeneration recipe rather than as concrete request bytes. Credentials therefore never reach disk: they come from the session config at run time.",
+  "type": "object",
+  "required": ["case_id", "session_id", "reproduction", "request_summary", "indicators"],
+  "properties": {
+    "case_id": { "type": "string" },
+    "session_id": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" },
+
+    "reproduction": {
+      "type": "object",
+      "description": "Everything needed to regenerate the exact request. A reproduce run recomputes the request from these inputs; it does not replay stored bytes.",
+      "required": ["engine_version", "master_seed", "case_index", "corpus_digest", "config_digest"],
+      "properties": {
+        "engine_version": { "type": "string" },
+        "master_seed": { "type": "string", "description": "Hex-encoded session seed." },
+        "case_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Position in the deterministic mutation sequence. The mutation for index i is a pure function of i, so worker scheduling does not affect it."
+        },
+        "corpus_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "config_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "target": { "type": "string", "description": "Which sample and field the mutation was applied to." }
+      }
+    },
+
+    "request_summary": {
+      "type": "object",
+      "description": "A redacted, human-readable view for reports. Never a complete credentialed request.",
+      "required": ["method", "url", "redacted"],
+      "properties": {
+        "method": { "type": "string" },
+        "url": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "body_preview": { "type": ["string", "null"] },
+        "redacted": { "const": true }
+      }
+    },
+
+    "indicators": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "reason"],
+        "properties": {
+          "type": { "enum": ["http_5xx", "timeout", "connection_error", "app_error_pattern", "latency_anomaly", "size_anomaly"] },
+          "confidence": {
+            "enum": ["low", "medium", "high"],
+            "description": "Assigned by the analysis phase, not by the engine. The engine records what it observed and why; judging how much to trust it is a separate job, so this is absent on a freshly captured case."
+          },
+          "reason": { "type": "string", "description": "Why this was flagged, including the baseline it was compared against." },
+          "baseline": { "type": ["object", "null"] }
+        }
+      }
+    },
+
+    "response_summary": {
+      "type": "object",
+      "properties": {
+        "status_code": { "type": ["integer", "null"] },
+        "latency_ms": { "type": ["number", "null"] },
+        "body_bytes": { "type": ["integer", "null"] },
+        "truncated": { "type": "boolean" },
+        "error": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

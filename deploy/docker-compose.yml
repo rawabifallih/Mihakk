@@ -1,0 +1,161 @@
+# Mihakk local stack.
+#
+# The testbed, the engine and the orchestrator, which also serves the dashboard.
+#
+# Isolation is enforced here, not documented here:
+#   - the testbed service has no `ports:` key, so nothing is published to the
+#     host and the app is unreachable from outside Docker;
+#   - the network is declared `internal: true`, so the testbed itself has no
+#     route off the Docker network and cannot reach the internet.
+#
+# Both properties are checked for real by scripts/verify-testbed-isolation.sh.
+# Adding a `ports:` entry or removing `internal: true` makes that script fail.
+#
+# Since phase 8a the engine's control API is on a Unix socket in a volume only
+# the engine and the orchestrator mount, and on no network at all. That is what
+# lets the engine join an operator's network (deploy/compose.target.yml) without
+# bringing the control API along. Start and stop the stack with scripts/stack.sh.
+
+name: mihakk
+
+services:
+  testbed:
+    build:
+      context: ../testbed
+    image: mihakk-testbed:dev
+    container_name: mihakk-testbed
+    # NO `ports:` HERE. Reach the testbed from another container on the
+    # mihakk-internal network, by the service name: http://testbed:8000
+    networks:
+      - mihakk-internal
+    environment:
+      MIHAKK_TESTBED_PORT: "8000"
+      MIHAKK_TESTBED_SLOW_DELAY: "0.4"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # A deliberately buggy app should not also be able to exhaust the host.
+    mem_limit: 256m
+    pids_limit: 128
+
+  # The engine's control API. It is a new way to reach the engine, which is a
+  # new way to reach whatever the engine can reach, so it gets the same
+  # treatment as the testbed: no published port, internal networks only.
+  #
+  # The API listens on /run/mihakk/control.sock, never on TCP. The orchestrator
+  # reaches it through the control-socket volume, as a member of group 10010,
+  # with the shared token. The one TCP listener is the liveness endpoint, which
+  # the engine refuses to bind anywhere but loopback.
+  engine:
+    build:
+      context: ..
+      dockerfile: engine/Dockerfile
+    image: mihakk-engine:dev
+    container_name: mihakk-engine
+    # NO `ports:` HERE.
+    networks:
+      - mihakk-internal
+    environment:
+      # Supplied by the operator; there is no default, and the engine refuses
+      # to start the control API without it.
+      MIHAKK_CONTROL_TOKEN: "${MIHAKK_CONTROL_TOKEN:?set MIHAKK_CONTROL_TOKEN before starting the engine}"
+    command: ["serve", "-socket", "/run/mihakk/control.sock",
+              "-health-addr", "127.0.0.1:8901", "-data", "/data"]
+    # The engine is the one container that may sit on two networks at once (the
+    # testbed's, and an operator's). It must not route between them. Docker's
+    # rules for internal networks already drop such traffic on the host; this is
+    # the layer inside the engine itself. Docker Desktop hands containers
+    # ip_forward=1 by default -- observed, not assumed -- so it is set, not left.
+    sysctls:
+      net.ipv4.ip_forward: "0"
+      net.ipv6.conf.all.forwarding: "0"
+    volumes:
+      - engine-data:/data
+      - control-socket:/run/mihakk
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+
+  # The orchestrator is the only service a person talks to. It never reaches a
+  # target: its one outbound path is the engine's control API, over the socket.
+  # So it is on mihakk-public alone, to be reachable from the host, and is no
+  # longer a neighbour of the testbed at all.
+  orchestrator:
+    build:
+      # The root, so the dashboard the orchestrator serves is in the context.
+      context: ..
+      dockerfile: orchestrator/Dockerfile
+      # The service alone: no tests, no pytest.
+      target: runtime
+    image: mihakk-orchestrator:dev
+    container_name: mihakk-orchestrator
+    # Loopback only. A tool that makes an engine send traffic should not be
+    # listening on every interface of the host it happens to run on.
+    # MIHAKK_PORT moves the published port; the host allowlist below is derived
+    # from the same variable so the two cannot drift apart.
+    ports:
+      - "127.0.0.1:${MIHAKK_PORT:-8100}:8100"
+    networks:
+      - mihakk-public
+    # The control socket's group. Nothing else about the engine is shared.
+    group_add:
+      - "10010"
+    environment:
+      MIHAKK_CONTROL_TOKEN: "${MIHAKK_CONTROL_TOKEN:?set MIHAKK_CONTROL_TOKEN before starting the orchestrator}"
+      # The dashboard's own credential, and deliberately not the one above: the
+      # control token reaches the engine and must never be in a browser's hands.
+      # Unset, the dashboard is not served at all rather than served open.
+      MIHAKK_DASHBOARD_TOKEN: "${MIHAKK_DASHBOARD_TOKEN:?set MIHAKK_DASHBOARD_TOKEN before starting the orchestrator}"
+      MIHAKK_ENGINE_URL: "unix:/run/mihakk/control.sock"
+      MIHAKK_DB: "/data/mihakk.db"
+      # Host names this service answers to. A name an attacker controls can be
+      # made to resolve to loopback, and only the Host header distinguishes it.
+      MIHAKK_ALLOWED_HOSTS: "127.0.0.1:${MIHAKK_PORT:-8100},localhost:${MIHAKK_PORT:-8100}"
+    volumes:
+      - orchestrator-data:/data
+      - control-socket:/run/mihakk
+    depends_on:
+      engine:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
+
+volumes:
+  engine-data:
+  orchestrator-data:
+  # Holds the control socket and nothing else. Mounted by the engine and the
+  # orchestrator only; its mode comes from the engine image (2770, group 10010).
+  control-socket:
+
+networks:
+  mihakk-internal:
+    name: mihakk-internal
+    # No gateway to the outside world. The testbed cannot make outbound
+    # connections, so a planted bug cannot become an outbound problem.
+    internal: true
+
+  # Carries the orchestrator's published port and nothing else. The testbed and
+  # the engine are never attached to it, and since phase 8a neither is anything
+  # the orchestrator shares with them.
+  mihakk-public:
+    name: mihakk-public

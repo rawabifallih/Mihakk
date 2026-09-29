@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mihakk.local/schemas/reproduce-result.schema.json",
+  "title": "Mihakk reproduce result",
+  "description": "Outcome of `mihakk reproduce <case-id>`. Reproduction is never assumed to succeed: the target may respond differently, and timing indicators in particular vary between runs.",
+  "type": "object",
+  "required": ["case_id", "fidelity", "authorization_revalidated", "indicator_reappeared"],
+  "properties": {
+    "case_id": { "type": "string" },
+
+    "fidelity": {
+      "type": "string",
+      "description": "exact = the corpus, config and engine version all still match the recipe, so the regenerated request is byte-identical to the original. drifted = at least one input changed, so this is a close approximation and the differences are listed in drift. The command MUST NOT claim an exact replay when fidelity is drifted.",
+      "enum": ["exact", "drifted"]
+    },
+    "drift": {
+      "type": "array",
+      "description": "Present when fidelity is drifted. Each entry names one input that changed since the case was recorded.",
+      "items": {
+        "type": "object",
+        "required": ["input", "recorded", "current"],
+        "properties": {
+          "input": { "enum": ["engine_version", "corpus_digest", "config_digest", "sample_missing"] },
+          "recorded": { "type": "string" },
+          "current": { "type": "string" },
+          "effect": { "type": "string", "description": "Plain-language note on what this means for the comparison." }
+        }
+      }
+    },
+
+    "authorization_revalidated": {
+      "type": "boolean",
+      "description": "Reproduction re-runs the full authorisation, scope and limit checks. It is never exempt from them."
+    },
+    "scope_digest": { "type": "string" },
+
+    "indicator_reappeared": {
+      "type": ["boolean", "null"],
+      "description": "Whether the original indicator was observed again. null when the request could not be sent at all."
+    },
+    "original": { "$ref": "https://mihakk.local/schemas/case.schema.json#/properties/response_summary" },
+    "replayed": { "$ref": "https://mihakk.local/schemas/case.schema.json#/properties/response_summary" },
+    "comparison_note": {
+      "type": "string",
+      "description": "Human-readable comparison. A non-reappearing indicator is not evidence that the original observation was wrong, and a reappearing one is not confirmation of a vulnerability."
+    }
+  }
+}

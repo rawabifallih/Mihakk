@@ -1,0 +1,31 @@
+{
+  "config_version": "1",
+  "scope": {
+    "targets": [
+      {
+        "scheme": "http",
+        "host": "testbed",
+        "port": 8000,
+        "path_prefixes": ["/api"],
+        "methods": ["GET", "POST"],
+        "allowed_addresses": ["127.0.0.1/32"]
+      }
+    ],
+    "max_redirects": 2
+  },
+  "limits": {
+    "requests_per_second": 5,
+    "burst": 2,
+    "max_total_requests": 200,
+    "max_concurrency": 2,
+    "max_session_duration": "2m",
+    "request_timeout": "5s",
+    "max_response_bytes": 1048576
+  },
+  "authorization": {
+    "operator": "rawabi",
+    "statement": "I am authorised to test the targets listed in this scope.",
+    "acked_at": "2026-09-21T22:26:55Z",
+    "scope_digest": "sha256:1f0e0cc069b7e00d21bedb95603cf9d17f690fb09cb70f45f18841dd960963ce"
+  }
+}

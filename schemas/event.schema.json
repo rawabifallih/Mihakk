@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mihakk.local/schemas/event.schema.json",
+  "title": "Mihakk engine event",
+  "description": "One line of the NDJSON stream the Go engine serves at GET /v1/runs/{id}/events. Every event carries a monotonic seq so the orchestrator can resume with ?from_seq=N after a disconnect and detect gaps.",
+  "type": "object",
+  "required": ["seq", "type", "session_id", "at"],
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1, "description": "Monotonic, gap-free per run. A gap means events were lost." },
+    "type": { "enum": ["started", "progress", "finding", "error", "warning", "done"] },
+    "session_id": { "type": "string" },
+    "at": { "type": "string", "format": "date-time" },
+
+    "progress": {
+      "type": "object",
+      "properties": {
+        "requests_used": { "type": "integer", "description": "Units of the request budget spent. Every attempt is charged, including one the safety layer then refused at the address check, so this is NOT a count of requests that reached a target: use http_answered for requests a response was observed to, and executed + baseline_attempted for cases attempted." },
+        "requests_budget": { "type": "integer" },
+        "planned": { "type": "integer", "minimum": 0 },
+        "executed": { "type": "integer", "minimum": 0, "description": "Cases that passed the safety layer and were attempted. This is not a claim that the target received anything; a refused connection is still an attempt." },
+        "saved": { "type": "integer", "minimum": 0 },
+        "refused": { "type": "integer", "minimum": 0, "description": "Cases that ended in a local or safety refusal. A redirected case can have earlier answered HTTP hops; consult http_* before saying nothing was attempted. Reported as refusals happen." },
+        "attempted": { "type": "integer", "minimum": 0, "description": "Cases with at least one actual HTTP attempt. It can overlap refused when an earlier redirect hop was attempted before a later hop was locally refused." },
+        "answered": { "type": "integer", "minimum": 0, "description": "Cases that completed with a final response. attempted counts cases with any actual HTTP attempt; http_answered counts every response, including intermediate redirect hops." },
+        "baseline_attempted": { "type": "integer", "minimum": 0, "description": "Baseline requests the safety layer let through. An attempt, not a delivery: a refused connection is an attempt." },
+        "baseline_refused": { "type": "integer", "minimum": 0, "description": "Baseline requests the safety layer refused; nothing was sent." },
+        "baseline_answered": { "type": "integer", "minimum": 0, "description": "Baseline requests that completed with a final response. Intermediate redirect responses are counted in http_answered." },
+        "http_answered": { "type": "integer", "minimum": 0, "description": "HTTP requests -- one per redirect hop -- that received a response. The unit the budget is charged in; never to be presented as a case count." },
+        "http_unanswered": { "type": "integer", "minimum": 0, "description": "HTTP requests attempted with no response: a refused connection, a reset, a timeout." },
+        "http_refused": { "type": "integer", "minimum": 0, "description": "HTTP requests charged to the budget and refused at connect by the address check." },
+        "elapsed_ms": { "type": "number" }
+      }
+    },
+    "finding": { "$ref": "https://mihakk.local/schemas/case.schema.json" },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string", "description": "Redacted before emission." },
+        "fatal": { "type": "boolean" }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "properties": {
+        "code": { "enum": ["events_dropped", "response_truncated", "baseline_unstable"] },
+        "message": { "type": "string" },
+        "events_dropped": {
+          "type": "integer",
+          "description": "Emitted when the run's ring buffer overflows. The engine reports the loss explicitly rather than letting events vanish silently; the orchestrator must mark the session incomplete."
+        }
+      }
+    },
+    "done": {
+      "type": "object",
+      "required": ["status", "total_seq"],
+      "properties": {
+        "status": { "enum": ["completed", "stopped", "expired", "budget_exhausted", "failed"] },
+        "total_seq": { "type": "integer", "description": "The final seq the engine emitted. The orchestrator compares this against what it received to decide completeness." },
+        "events_dropped": { "type": "integer" }
+      }
+    }
+  }
+}

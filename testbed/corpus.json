@@ -1,0 +1,59 @@
+{
+  "corpus_version": "1",
+  "samples": [
+    {
+      "id": "create-order",
+      "method": "POST",
+      "url": "http://testbed:8000/api/orders",
+      "headers": {
+        "Content-Type": [
+          "application/json"
+        ],
+        "Accept": [
+          "application/json"
+        ]
+      },
+      "body": "{\"sku\":\"A-001\",\"qty\":2}"
+    },
+    {
+      "id": "items-listing",
+      "method": "GET",
+      "url": "http://testbed:8000/api/items?page=1&limit=20&q=shoes",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "User-Agent": [
+          "mihakk/0.3"
+        ]
+      }
+    },
+    {
+      "id": "search",
+      "method": "POST",
+      "url": "http://testbed:8000/api/search",
+      "headers": {
+        "Content-Type": [
+          "application/json"
+        ],
+        "Accept": [
+          "application/json"
+        ]
+      },
+      "body": "{\"term\":\"shoes\"}"
+    },
+    {
+      "id": "search-query",
+      "method": "GET",
+      "url": "http://testbed:8000/api/search?term=shoes",
+      "headers": {
+        "Accept": [
+          "application/json"
+        ],
+        "User-Agent": [
+          "mihakk/0.3"
+        ]
+      }
+    }
+  ]
+}

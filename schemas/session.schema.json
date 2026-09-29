@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mihakk.local/schemas/session.schema.json",
+  "title": "Mihakk session",
+  "description": "A fuzzing session: its authorised scope, its limits, and its completeness. Shared contract between the Go engine and the Python orchestrator.",
+  "type": "object",
+  "required": ["session_id", "status", "config", "completeness"],
+  "properties": {
+    "session_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "description": "completed = ran to the end with every event accounted for. incomplete = finished but events were lost, so results are a subset. interrupted = the engine or the stream died before the session ended. stopped = an operator used the kill switch.",
+      "enum": ["created", "running", "completed", "incomplete", "interrupted", "stopped", "failed"]
+    },
+    "config": { "$ref": "#/$defs/session_config" },
+    "engine_version": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "completeness": { "$ref": "#/$defs/completeness" }
+  },
+  "$defs": {
+    "session_config": {
+      "type": "object",
+      "required": ["config_version", "scope", "limits", "authorization"],
+      "properties": {
+        "config_version": { "const": "1" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "limits": { "$ref": "#/$defs/limits" },
+        "authorization": { "$ref": "#/$defs/authorization" },
+        "redact_extra_names": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": ["targets"],
+      "properties": {
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["scheme", "host", "port", "path_prefixes", "methods"],
+            "properties": {
+              "scheme": { "enum": ["http", "https"] },
+              "host": {
+                "type": "string",
+                "description": "Exact hostname or IP. Wildcards are refused: they make it too easy to authorise something you do not own.",
+                "not": { "pattern": "[*?]" }
+              },
+              "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "path_prefixes": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "methods": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "allowed_addresses": {
+                "type": "array",
+                "description": "Specific restricted addresses this target may resolve to: single IPs or narrow CIDRs (IPv4 /24 or narrower, IPv6 /120 or narrower). Broad ranges such as 10.0.0.0/8 are refused, Link-local (including the cloud metadata address 169.254.169.254), multicast, unspecified and broadcast addresses can never be authorised by any entry: the engine refuses such a config outright, and refuses the address again at dial time. Public addresses need no entry. This list is part of the scope digest, so editing it invalidates the authorisation acknowledgement.",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        },
+        "max_redirects": { "type": "integer", "minimum": 0, "default": 3 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "description": "Every ceiling is mandatory and must be positive. There is deliberately no 'unlimited' value.",
+      "required": [
+        "requests_per_second", "burst", "max_total_requests",
+        "max_concurrency", "max_session_duration", "request_timeout", "max_response_bytes"
+      ],
+      "properties": {
+        "requests_per_second": { "type": "number", "exclusiveMinimum": 0 },
+        "burst": { "type": "integer", "minimum": 1 },
+        "max_total_requests": { "type": "integer", "minimum": 1 },
+        "max_concurrency": { "type": "integer", "minimum": 1 },
+        "max_session_duration": { "type": ["string", "number"], "description": "Go duration string (\"10m\") or bare seconds." },
+        "request_timeout": { "type": ["string", "number"] },
+        "max_response_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "description": "No session starts without this. The acknowledgement is bound to one exact scope digest, so it cannot be replayed against a wider scope.",
+      "required": ["operator", "statement", "acked_at", "scope_digest"],
+      "properties": {
+        "operator": { "type": "string", "minLength": 1 },
+        "statement": {
+          "const": "I am authorised to test the targets listed in this scope.",
+          "description": "Exact text, not a boolean, so the acknowledgement appears verbatim in the audit log."
+        },
+        "acked_at": { "type": "string", "format": "date-time" },
+        "scope_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "description": "Whether the orchestrator saw every event the engine produced. When complete is false, the session and every report derived from it MUST be labelled as partial: the result set is a subset of what the engine observed, and absence of a finding proves nothing.",
+      "required": ["complete", "events_received", "events_dropped"],
+      "properties": {
+        "complete": { "type": "boolean" },
+        "events_received": { "type": "integer", "minimum": 0 },
+        "events_dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Events the engine produced that never reached the orchestrator, counted by sequence gaps and by the engine's own ring-buffer overflow counter."
+        },
+        "last_seq": { "type": "integer", "minimum": 0 },
+        "reason": {
+          "type": ["string", "null"],
+          "enum": ["buffer_overflow", "stream_disconnected", "engine_unavailable", "orchestrator_shutdown", null]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "corpus_version": "1",
+  "samples": [
+    {
+      "id": "list-items",
+      "method": "GET",
+      "url": "http://testbed:8000/api/items?page=1&limit=20&q=shoes",
+      "headers": {
+        "Accept": ["application/json"],
+        "User-Agent": ["mihakk/0.2"]
+      }
+    },
+    {
+      "id": "create-order",
+      "method": "POST",
+      "url": "http://testbed:8000/api/orders",
+      "headers": {
+        "Content-Type": ["application/json"],
+        "Accept": ["application/json"]
+      },
+      "body": "{\"customer\":{\"id\":42,\"name\":\"Rawabi\"},\"items\":[{\"sku\":\"A-1\",\"qty\":2}],\"express\":true,\"note\":null}"
+    },
+    {
+      "id": "search-form",
+      "method": "POST",
+      "url": "http://testbed:8000/api/search",
+      "headers": {
+        "Content-Type": ["application/x-www-form-urlencoded"]
+      },
+      "body": "term=shoes&sort=price&page=1"
+    }
+  ]
+}
